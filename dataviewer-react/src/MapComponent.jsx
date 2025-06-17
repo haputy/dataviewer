@@ -72,7 +72,7 @@ const MapComponent = () => {
   }, []);
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', border: '5px solid red'}}>
       {/* Map container */}
       <div ref={mapRef} style={{ flexGrow: 1, minHeight: 0 }} />
   
