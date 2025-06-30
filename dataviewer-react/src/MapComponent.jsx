@@ -21,14 +21,7 @@ const MapComponent = () => {
 
     // WMS Layers
     L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
-      layers: 'region:testv3',
-      format: 'image/png',
-      transparent: true,
-      attribution: 'Zartico GeoServer',
-    }).addTo(map);
-
-    L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
-      layers: 'region:btm',
+      layers: 'region:deer_valley_gis_master',
       format: 'image/png',
       transparent: true,
       attribution: 'Zartico GeoServer',
@@ -49,7 +42,7 @@ const MapComponent = () => {
 
       const url = `https://dev-geoserver.zartico.com/geoserver/region/ows?` +
         `service=WFS&version=1.0.0&request=GetFeature&` +
-        `typeName=region:testv3&` +
+        `typeName=region:deer_valley_gis_master&` +
         `outputFormat=application/json&` +
         `bbox=${bbox},EPSG:4326&` +
         `maxFeatures=100`;
@@ -93,7 +86,7 @@ const MapComponent = () => {
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Top Category</th>
+                <th>ID</th>
                 <th>Sub Category</th>
                 <th>POI Tag</th>
                 <th>NAICS</th>
@@ -103,12 +96,11 @@ const MapComponent = () => {
             <tbody>
               {features.map((f, idx) => (
                 <tr key={idx}>
-                  <td>{f.properties.location_name}</td>
-                  <td>{f.properties.top_category}</td>
+                  <td>{f.properties.name}</td>
+                  <td>{f.properties.id}</td>
                   <td>{f.properties.sub_category}</td>
                   <td>{f.properties.poi_tag}</td>
-                  <td>{f.properties.naics_code}</td>
-                  <td>{f.properties.flag}</td>
+                  <td>{f.properties.f_naics_code}</td>
                 </tr>
               ))}
             </tbody>
