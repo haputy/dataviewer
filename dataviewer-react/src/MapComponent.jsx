@@ -9,23 +9,35 @@ const MapComponent = () => {
   const [features, setFeatures] = useState([]);
 
   useEffect(() => {
-    if (mapInstanceRef.current || !mapRef.current) return;
+  if (mapInstanceRef.current || !mapRef.current) return;
 
-   const map = L.map(mapRef.current).setView([40.63480153926745, -109.03928733785676], 8);
-    mapInstanceRef.current = map;
+  const map = L.map(mapRef.current).setView([40.63480153926745, -109.03928733785676], 8);
+  mapInstanceRef.current = map;
 
-    // Basemap
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(map);
+  // Basemaps
+  const mapboxLayer = L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
+    attribution: '© OpenStreetMap, © Mapbox',
+    tileSize: 512,
+    zoomOffset: -1
+  });
 
-    // WMS Layers
-    L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
-      layers: 'region:deer_valley_gis_master',
-      format: 'image/png',
-      transparent: true,
-      attribution: 'Zartico GeoServer',
-    }).addTo(map);
+  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  });
+
+  mapboxLayer.addTo(map);  // default active
+
+  L.control.layers(
+    { "Mapbox": mapboxLayer, "OpenStreetMap": osmLayer }
+  ).addTo(map);
+
+  // WMS Layer
+  L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
+    layers: 'region:deer_valley_gis_master',
+    format: 'image/png',
+    transparent: true,
+    attribution: 'Zartico GeoServer',
+  }).addTo(map);
 
     // Click handler
     map.on('click', function (e) {
