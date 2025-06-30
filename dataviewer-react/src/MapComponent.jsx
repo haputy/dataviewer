@@ -11,7 +11,7 @@ const MapComponent = () => {
   useEffect(() => {
     if (mapInstanceRef.current || !mapRef.current) return;
 
-    const map = L.map(mapRef.current).setView([42.3601, -71.0589], 12);
+   const map = L.map(mapRef.current).setView([40.63480153926745, -109.03928733785676], 8);
     mapInstanceRef.current = map;
 
     // Basemap
@@ -65,7 +65,7 @@ const MapComponent = () => {
   }, []);
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', border: '5px solid red'}}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column'}}>
       {/* Map container */}
       <div ref={mapRef} style={{ flexGrow: 1, minHeight: 0 }} />
   
