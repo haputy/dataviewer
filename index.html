@@ -1,6 +1,6 @@
 <head>
   <meta charset="utf-8" />
-  <title>Leaflet + GeoServer WMS + GetFeatureInfo + Mapbox</title>
+  <title>Internal Data Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link 
     rel="stylesheet" 
@@ -31,7 +31,7 @@
 
     // GeoServer WMS Layer
     const wmsLayer = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
-      layers: 'region:testv3',
+      layers: 'region:deer_valley_gis_master',
       format: 'image/png',
       transparent: true,
       attribution: 'Zartico GeoServer'
@@ -61,7 +61,7 @@
 
   const url = `https://dev-geoserver.zartico.com/geoserver/region/ows?` +
     `service=WFS&version=1.0.0&request=GetFeature&` +
-    `typeName=region:testv3&` +
+    `typeName=region:deer_valley_gis_master` +
     `outputFormat=application/json&` +
     `bbox=${bbox},EPSG:4326&` +
     `maxFeatures=100`;
