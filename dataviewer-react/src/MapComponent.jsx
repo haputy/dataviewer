@@ -84,8 +84,7 @@ const MapComponent = () => {
         `service=WFS&version=1.0.0&request=GetFeature&` +
         `typeName=region:deer_valley_gis_master&` +
         `outputFormat=application/json&` +
-        `bbox=${bbox},EPSG:4326&` +
-        `maxFeatures=100`;
+        `bbox=${bbox},EPSG:4326&`;
 
       fetch(url)
         .then((res) => res.json())
