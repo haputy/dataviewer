@@ -45,7 +45,7 @@ const MapComponent = () => {
     const wmsLayer = L.tileLayer.wms(
       'https://dev-geoserver.zartico.com/geoserver/region/wms',
       {
-        layers: 'region:deer_valley_gis_master',
+        layers: 'region:butler_final',
         format: 'image/png',
         transparent: true,
         attribution: 'Zartico GeoServer',
@@ -82,7 +82,7 @@ const MapComponent = () => {
       const url =
         `https://dev-geoserver.zartico.com/geoserver/region/ows?` +
         `service=WFS&version=1.0.0&request=GetFeature&` +
-        `typeName=region:deer_valley_gis_master&` +
+        `typeName=region:butler_final&` +
         `outputFormat=application/json&` +
         `bbox=${bbox},EPSG:4326&`;
 
