@@ -20,7 +20,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
-    const map = L.map('map').setView([42.3601, -71.0589], 12); // Boston
+    const map = L.map('map').setView([39.142°, -84.4388°], 12); // Boston
 
     // Mapbox Basemap
     L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
@@ -31,7 +31,7 @@
 
     // GeoServer WMS Layer
     const wmsLayer = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
-      layers: 'region:deer_valley_gis_master',
+      layers: 'region:butler_final',
       format: 'image/png',
       transparent: true,
       attribution: 'Zartico GeoServer'
