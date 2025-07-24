@@ -12,7 +12,7 @@ const MapComponent = () => {
     if (mapInstanceRef.current || !mapRef.current) return;
 
     const map = L.map(mapRef.current).setView(
-      [40.63480153926745, -109.03928733785676],
+      [39.52, -84.03928733785676],
       8
     );
     mapInstanceRef.current = map;
