@@ -77,12 +77,12 @@
               content += `
                 <div class="card mb-2">
                   <div class="card-body p-2">
-                    <h6 class="card-title"><strong>Name:</strong>${f.properties['location_name']}</h6>
+                    <h6 class="card-title"><strong>Name:</strong>${f.properties['poi_name']}</h6>
                     <ul class="list-group list-group-flush">
-                      <li class="list-group-item px-2 py-1"><strong>${'Top Category(SG)'}:</strong> ${f.properties['top_category']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>${'visitor_device_count'}:</strong> ${f.properties['visitor_device_count']}</li>
                       <li class="list-group-item px-2 py-1"><strong>${'Sub Category(SG)'}:</strong> ${f.properties['sub_category']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'Heirarchy Rank'}:</strong> ${f.properties['poi_tag']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'NAICS Code'}:</strong> ${f.properties['naics_code']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>${'Heirarchy Rank'}:</strong> ${f.properties['vis_poi_tag']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>${'NAICS Code'}:</strong> ${f.properties['vis_naics_code']}</li>
                       <li class="list-group-item px-2 py-1"><strong>${'Flags'}:</strong> ${f.properties['flag']}</li>`
                       ;
 
