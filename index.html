@@ -39,13 +39,6 @@
       attribution: 'Zartico GeoServer'
     }).addTo(map);
 
-    // GeoServer WMS Layer - btm
-    const wmsLayer2 = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
-      layers: 'region:btm',
-      format: 'image/png',
-      transparent: true,
-      attribution: 'Zartico GeoServer'
-    }).addTo(map);
 
     // Radius scaling
     function getRadius(value) {
@@ -58,39 +51,43 @@
     }
 
     // Graduated Circles Layer (Centroids)
-    const poiCirclesLayer = L.geoJSON(null, {
-      onEachFeature: function (feature, layer) {
-        let count = feature.properties.visitor_device_count || 1;
+   const poiCirclesLayer = L.geoJSON(null, {
+  pointToLayer: () => null,  // prevents default rendering
+  style: () => null,         // suppress styling for polygons
+  onEachFeature: function (feature, layer) {
+    const count = feature.properties.visitor_device_count || 1;
 
-        let center;
-        if (feature.geometry.type === "Polygon" || feature.geometry.type === "MultiPolygon") {
-          const latlngs = L.GeoJSON.coordsToLatLngs(feature.geometry.coordinates, feature.geometry.type === "Polygon" ? 1 : 2);
-          const polygon = L.polygon(latlngs);
-          center = polygon.getBounds().getCenter();
-        } else {
-          center = layer.getLatLng();
-        }
+    // Get polygon centroid
+    let center;
+    if (feature.geometry.type === "Polygon" || feature.geometry.type === "MultiPolygon") {
+      const latlngs = L.GeoJSON.coordsToLatLngs(feature.geometry.coordinates, feature.geometry.type === "Polygon" ? 1 : 2);
+      const polygon = L.polygon(latlngs);
+      center = polygon.getBounds().getCenter();
+    } else {
+      center = layer.getLatLng();
+    }
 
-        const circle = L.circleMarker(center, {
-          radius: getRadius(count),
-          fillColor: "#0074D9",
-          color: "#003366",
-          weight: 1,
-          opacity: 1,
-          fillOpacity: 0.6
-        }).bindPopup(
-          `<strong>${feature.properties.poi_name}</strong><br>` +
-          `Visitor Count: ${count}<br>` +
-          `Category: ${feature.properties.primary_category}`
-        );
+    // Create manual circle marker at centroid
+    const circle = L.circleMarker(center, {
+      radius: getRadius(count),
+      fillColor: "#0074D9",
+      color: "#003366",
+      weight: 1,
+      opacity: 1,
+      fillOpacity: 0.6
+    }).bindPopup(
+      `<strong>${feature.properties.poi_name}</strong><br>` +
+      `Visitor Count: ${count}<br>` +
+      `Category: ${feature.properties.primary_category}`
+    );
 
-        circle.addTo(poiCirclesLayer);
-      },
-      filter: function (feature) {
-        const val = feature.properties.visitor_device_count;
-        return val >= 1 && val <= 82000;
-      }
-    });
+    circle.addTo(poiCirclesLayer);
+  },
+  filter: function (feature) {
+    const val = feature.properties.visitor_device_count;
+    return val >= 1 && val <= 82000;
+  }
+});
 
     // Fetch WFS data
     fetch(`https://dev-geoserver.zartico.com/geoserver/region/ows?` +
