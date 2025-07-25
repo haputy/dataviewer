@@ -55,26 +55,41 @@
   }
 
   const poiCirclesLayer = L.geoJSON(null, {
-    pointToLayer: function (feature, latlng) {
-      const count = feature.properties.visitor_device_count || 1;
-      return L.circleMarker(latlng, {
-        radius: getRadius(count),
-        fillColor: "#0074D9",
-        color: "#003366",
-        weight: 1,
-        opacity: 1,
-        fillOpacity: 0.6
-      }).bindPopup(
-        `<strong>${feature.properties.poi_name}</strong><br>` +
-        `Visitor Count: ${count}<br>` +
-        `Category: ${feature.properties.primary_category}`
-      );
-    },
-    filter: function (feature) {
-      const val = feature.properties.visitor_device_count;
-      return val >= 1 && val <= 80000;
+  onEachFeature: function (feature, layer) {
+    let count = feature.properties.visitor_device_count || 1;
+
+    // Determine center of polygon
+    let center;
+    if (feature.geometry.type === "Polygon" || feature.geometry.type === "MultiPolygon") {
+      const latlngs = L.GeoJSON.coordsToLatLngs(feature.geometry.coordinates, feature.geometry.type === "Polygon" ? 1 : 2);
+      const polygon = L.polygon(latlngs);
+      center = polygon.getBounds().getCenter();
+    } else {
+      // fallback for other types
+      center = layer.getLatLng();
     }
-  });
+
+    // Create circle marker manually and add to map
+    const circle = L.circleMarker(center, {
+      radius: getRadius(count),
+      fillColor: "#0074D9",
+      color: "#003366",
+      weight: 1,
+      opacity: 1,
+      fillOpacity: 0.6
+    }).bindPopup(
+      `<strong>${feature.properties.poi_name}</strong><br>` +
+      `Visitor Count: ${count}<br>` +
+      `Category: ${feature.properties.primary_category}`
+    );
+
+    circle.addTo(poiCirclesLayer);
+  },
+  filter: function (feature) {
+    const val = feature.properties.visitor_device_count;
+    return val >= 1 && val <= 82000;
+  }
+});
 
   // Fetch WFS data as GeoJSON
   fetch(`https://dev-geoserver.zartico.com/geoserver/region/ows?` +
