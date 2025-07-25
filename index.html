@@ -45,6 +45,55 @@
       attribution: 'Zartico GeoServer'
     }).addTo(map);
 
+    function getRadius(value) {
+    const minRadius = 4;
+    const maxRadius = 25;
+    const minVal = 1;
+    const maxVal = 80000;
+    value = Math.max(minVal, Math.min(maxVal, value));
+    return minRadius + (value - minVal) * (maxRadius - minRadius) / (maxVal - minVal);
+  }
+
+  const poiCirclesLayer = L.geoJSON(null, {
+    pointToLayer: function (feature, latlng) {
+      const count = feature.properties.visitor_device_count || 1;
+      return L.circleMarker(latlng, {
+        radius: getRadius(count),
+        fillColor: "#0074D9",
+        color: "#003366",
+        weight: 1,
+        opacity: 1,
+        fillOpacity: 0.6
+      }).bindPopup(
+        `<strong>${feature.properties.poi_name}</strong><br>` +
+        `Visitor Count: ${count}<br>` +
+        `Category: ${feature.properties.primary_category}`
+      );
+    },
+    filter: function (feature) {
+      const val = feature.properties.visitor_device_count;
+      return val >= 1 && val <= 80000;
+    }
+  });
+
+  // Fetch WFS data as GeoJSON
+  fetch(`https://dev-geoserver.zartico.com/geoserver/region/ows?` +
+    `service=WFS&version=1.0.0&request=GetFeature&` +
+    `typeName=region:butler_final&outputFormat=application/json`)
+    .then(res => res.json())
+    .then(data => {
+      poiCirclesLayer.addData(data);
+    })
+    .catch(err => {
+      console.error("Error loading graduated circles WFS:", err);
+    });
+
+  // Add to map toggle control
+  const overlayMaps = {
+    "Visitor Count Circles": poiCirclesLayer
+  };
+  L.control.layers(null, overlayMaps, { collapsed: false }).addTo(map);
+
     // Handle map click → GetFeatureInfo request
  map.on('click', function(e) {
   const lat = e.latlng.lat;
