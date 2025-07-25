@@ -1,3 +1,5 @@
+<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Internal Data Viewer</title>
@@ -20,7 +22,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
-    const map = L.map('map').setView([39.142, -84.4388], 12); // Boston
+    const map = L.map('map').setView([39.142, -84.4388], 12);
 
     // Mapbox Basemap
     L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
@@ -29,7 +31,7 @@
       zoomOffset: -1
     }).addTo(map);
 
-    // GeoServer WMS Layer
+    // GeoServer WMS Layer - butler_final
     const wmsLayer = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
       layers: 'region:butler_final',
       format: 'image/png',
@@ -37,7 +39,7 @@
       attribution: 'Zartico GeoServer'
     }).addTo(map);
 
-    // GeoServer WMS Layer
+    // GeoServer WMS Layer - btm
     const wmsLayer2 = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
       layers: 'region:btm',
       format: 'image/png',
@@ -45,140 +47,139 @@
       attribution: 'Zartico GeoServer'
     }).addTo(map);
 
+    // Radius scaling
     function getRadius(value) {
-    const minRadius = 4;
-    const maxRadius = 25;
-    const minVal = 1;
-    const maxVal = 80000;
-    value = Math.max(minVal, Math.min(maxVal, value));
-    return minRadius + (value - minVal) * (maxRadius - minRadius) / (maxVal - minVal);
-  }
-
-  const poiCirclesLayer = L.geoJSON(null, {
-  onEachFeature: function (feature, layer) {
-    let count = feature.properties.visitor_device_count || 1;
-
-    // Determine center of polygon
-    let center;
-    if (feature.geometry.type === "Polygon" || feature.geometry.type === "MultiPolygon") {
-      const latlngs = L.GeoJSON.coordsToLatLngs(feature.geometry.coordinates, feature.geometry.type === "Polygon" ? 1 : 2);
-      const polygon = L.polygon(latlngs);
-      center = polygon.getBounds().getCenter();
-    } else {
-      // fallback for other types
-      center = layer.getLatLng();
+      const minRadius = 4;
+      const maxRadius = 50;
+      const minVal = 1;
+      const maxVal = 82000;
+      value = Math.max(minVal, Math.min(maxVal, value));
+      return minRadius + (value - minVal) * (maxRadius - minRadius) / (maxVal - minVal);
     }
 
-    // Create circle marker manually and add to map
-    const circle = L.circleMarker(center, {
-      radius: getRadius(count),
-      fillColor: "#0074D9",
-      color: "#003366",
-      weight: 1,
-      opacity: 1,
-      fillOpacity: 0.6
-    }).bindPopup(
-      `<strong>${feature.properties.poi_name}</strong><br>` +
-      `Visitor Count: ${count}<br>` +
-      `Category: ${feature.properties.primary_category}`
-    );
+    // Graduated Circles Layer (Centroids)
+    const poiCirclesLayer = L.geoJSON(null, {
+      onEachFeature: function (feature, layer) {
+        let count = feature.properties.visitor_device_count || 1;
 
-    circle.addTo(poiCirclesLayer);
-  },
-  filter: function (feature) {
-    const val = feature.properties.visitor_device_count;
-    return val >= 1 && val <= 82000;
-  }
-});
+        let center;
+        if (feature.geometry.type === "Polygon" || feature.geometry.type === "MultiPolygon") {
+          const latlngs = L.GeoJSON.coordsToLatLngs(feature.geometry.coordinates, feature.geometry.type === "Polygon" ? 1 : 2);
+          const polygon = L.polygon(latlngs);
+          center = polygon.getBounds().getCenter();
+        } else {
+          center = layer.getLatLng();
+        }
 
-  // Fetch WFS data as GeoJSON
-  fetch(`https://dev-geoserver.zartico.com/geoserver/region/ows?` +
-    `service=WFS&version=1.0.0&request=GetFeature&` +
-    `typeName=region:butler_final&outputFormat=application/json`)
-    .then(res => res.json())
-    .then(data => {
-      poiCirclesLayer.addData(data);
-    })
-    .catch(err => {
-      console.error("Error loading graduated circles WFS:", err);
+        const circle = L.circleMarker(center, {
+          radius: getRadius(count),
+          fillColor: "#0074D9",
+          color: "#003366",
+          weight: 1,
+          opacity: 1,
+          fillOpacity: 0.6
+        }).bindPopup(
+          `<strong>${feature.properties.poi_name}</strong><br>` +
+          `Visitor Count: ${count}<br>` +
+          `Category: ${feature.properties.primary_category}`
+        );
+
+        circle.addTo(poiCirclesLayer);
+      },
+      filter: function (feature) {
+        const val = feature.properties.visitor_device_count;
+        return val >= 1 && val <= 82000;
+      }
     });
 
-  // Add to map toggle control
-  const overlayMaps = {
-    "Visitor Count Circles": poiCirclesLayer
-  };
-  L.control.layers(null, overlayMaps, { collapsed: false }).addTo(map);
+    // Fetch WFS data
+    fetch(`https://dev-geoserver.zartico.com/geoserver/region/ows?` +
+      `service=WFS&version=1.0.0&request=GetFeature&` +
+      `typeName=region:butler_final&outputFormat=application/json`)
+      .then(res => res.json())
+      .then(data => {
+        poiCirclesLayer.addData(data);
+      })
+      .catch(err => {
+        console.error("Error loading graduated circles WFS:", err);
+      });
 
-    // Handle map click → GetFeatureInfo request
- map.on('click', function(e) {
-  const lat = e.latlng.lat;
-  const lon = e.latlng.lng;
-  const buffer = 0.0000005; // Roughly ~50m buffer for bounding box
+    // Layer toggle behavior
+    const baseMaps = {
+      "Butler Polygons (WMS)": wmsLayer
+    };
+    const overlayMaps = {
+      "Visitor Count Circles": poiCirclesLayer
+    };
+    const layerControl = L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
 
-  // Create a bounding box around the clicked point
-  const minx = lon - buffer;
-  const miny = lat - buffer;
-  const maxx = lon + buffer;
-  const maxy = lat + buffer;
+    map.on('overlayadd', function(e) {
+      if (e.name === "Visitor Count Circles") {
+        map.removeLayer(wmsLayer);
+      }
+    });
 
-  const bbox = `${minx},${miny},${maxx},${maxy}`;
+    map.on('overlayremove', function(e) {
+      if (e.name === "Visitor Count Circles") {
+        map.addLayer(wmsLayer);
+      }
+    });
 
-  const url = `https://dev-geoserver.zartico.com/geoserver/region/ows?` +
-    `service=WFS&version=1.0.0&request=GetFeature&` +
-    `typeName=region:butler_final&` +
-    `outputFormat=application/json&` +
-    `bbox=${bbox},EPSG:4326&` +
-    `maxFeatures=100`;
+    // Click popup from WFS
+    map.on('click', function(e) {
+      const lat = e.latlng.lat;
+      const lon = e.latlng.lng;
+      const buffer = 0.0000005;
+      const bbox = `${lon - buffer},${lat - buffer},${lon + buffer},${lat + buffer}`;
 
-  fetch(url)
-    .then(response => response.json())
-    .then(data => {
-      if (data.features && data.features.length > 0) {
+      const url = `https://dev-geoserver.zartico.com/geoserver/region/ows?` +
+        `service=WFS&version=1.0.0&request=GetFeature&` +
+        `typeName=region:butler_final&outputFormat=application/json&` +
+        `bbox=${bbox},EPSG:4326&maxFeatures=100`;
+
+      fetch(url)
+        .then(response => response.json())
+        .then(data => {
+          if (data.features && data.features.length > 0) {
             let content = `<div class="p-2" style="max-height:300px; overflow-y:auto;">`;
             content += `<h5>${data.features.length} feature(s) found</h5>`;
 
-            data.features.forEach((f, i) => {
+            data.features.forEach(f => {
               content += `
                 <div class="card mb-2">
                   <div class="card-body p-2">
-                    <h6 class="card-title"><strong>Name:</strong>${f.properties['poi_name']}</h6>
+                    <h6 class="card-title"><strong>Name:</strong> ${f.properties['poi_name']}</h6>
                     <ul class="list-group list-group-flush">
-                      <li class="list-group-item px-2 py-1"><strong>${'Visitor Device Count'}:</strong> ${f.properties['visitor_device_count']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'Primary Category'}:</strong> ${f.properties['primary_category']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'Secondary Category'}:</strong> ${f.properties['secondary_category']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'NAICS Code'}:</strong> ${f.properties['vis_naics_code']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'POI ID'}:</strong> ${f.properties['poi_id']}</li>`
-                      ;
-
-
-
-              content += `
+                      <li class="list-group-item px-2 py-1"><strong>Visitor Device Count:</strong> ${f.properties['visitor_device_count']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>Primary Category:</strong> ${f.properties['primary_category']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>Secondary Category:</strong> ${f.properties['secondary_category']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>NAICS Code:</strong> ${f.properties['vis_naics_code']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>POI ID:</strong> ${f.properties['poi_id']}</li>
                     </ul>
                   </div>
                 </div>`;
             });
 
             content += `</div>`;
-
             L.popup({ maxWidth: 500 })
-  .setLatLng(e.latlng)
-  .setContent(`<div style="max-height: 300px; overflow-y: auto;">${content}</div>`)
-  .openOn(map);
-      } else {
-        L.popup()
-          .setLatLng(e.latlng)
-          .setContent("No features found.")
-          .openOn(map);
-      }
-    })
-    .catch(err => {
-      console.error("WFS fetch error:", err);
-      L.popup()
-        .setLatLng(e.latlng)
-        .setContent("Error retrieving features.")
-        .openOn(map);
+              .setLatLng(e.latlng)
+              .setContent(`<div style="max-height: 300px; overflow-y: auto;">${content}</div>`)
+              .openOn(map);
+          } else {
+            L.popup()
+              .setLatLng(e.latlng)
+              .setContent("No features found.")
+              .openOn(map);
+          }
+        })
+        .catch(err => {
+          console.error("WFS fetch error:", err);
+          L.popup()
+            .setLatLng(e.latlng)
+            .setContent("Error retrieving features.")
+            .openOn(map);
+        });
     });
-});
   </script>
 </body>
 </html>
