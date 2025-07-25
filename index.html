@@ -42,13 +42,13 @@
 
     // Radius scaling
     function getRadius(value) {
-      const minRadius = 4;
-      const maxRadius = 50;
-      const minVal = 1;
-      const maxVal = 82000;
-      value = Math.max(minVal, Math.min(maxVal, value));
-      return minRadius + (value - minVal) * (maxRadius - minRadius) / (maxVal - minVal);
-    }
+  if (value >= 2000) return 50;
+  if (value >= 1000) return 35;
+  if (value >= 5000) return 25;
+  if (value >= 100) return 15;
+  if (value >= 1) return 8;
+  return 4; // fallback for 0 or missing values
+}
 
     // Graduated Circles Layer (Centroids)
    const poiCirclesLayer = L.geoJSON(null, {
@@ -100,13 +100,21 @@
       .catch(err => {
         console.error("Error loading graduated circles WFS:", err);
       });
+const baseMaps = {
+  "Mapbox Streets": L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
+    attribution: '© OpenStreetMap, © Mapbox',
+    tileSize: 512,
+    zoomOffset: -1
+  })
+};
 
-    // Layer toggle behavior
-    const baseMaps = {
+const overlayMaps = {
   "Butler Polygons (WMS)": wmsLayer,
   "Visitor Count Circles": poiCirclesLayer
 };
-L.control.layers(baseMaps, null, { collapsed: false }).addTo(map);
+
+baseMaps["Mapbox Streets"].addTo(map);
+L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
 
     map.on('overlayadd', function(e) {
       if (e.name === "Visitor Count Circles") {
