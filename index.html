@@ -14,20 +14,23 @@
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/leaflet.gridlayer.googlemutant@0.15.0/dist/Leaflet.GoogleMutant.min.js"></script>
 
   <script>
     const map = L.map('map', { center: [39.142, -84.4388], zoom: 12 });
 
-    const mapbox = L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
+    const mapboxStreets = L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
       attribution: '© OpenStreetMap, © Mapbox',
       tileSize: 512,
       zoomOffset: -1
     });
 
-    const googleHybrid = L.gridLayer.googleMutant({ type: 'hybrid' });
+    const mapboxSatellite = L.tileLayer('https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
+      attribution: '© Mapbox Satellite',
+      tileSize: 512,
+      zoomOffset: -1
+    });
 
-    mapbox.addTo(map);
+    mapboxStreets.addTo(map);
 
     const wmsLayer = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
       layers: 'region:butler_final',
@@ -36,14 +39,14 @@
       attribution: 'Zartico GeoServer'
     });
 
-      function getRadius(value) {
-  if (value >= 2500) return 100;
-  if (value >= 1000) return 50;
-  if (value >= 500) return 25;
-  if (value >= 100) return 15;
-  if (value >= 1) return 5;
-  return 4; // fallback for 0 or missing values
-}
+    function getRadius(value) {
+      if (value >= 2500) return 100;
+      if (value >= 1000) return 50;
+      if (value >= 500) return 25;
+      if (value >= 100) return 15;
+      if (value >= 1) return 5;
+      return 4; // fallback for 0 or missing values
+    }
 
     const poiCirclesLayer = L.geoJSON(null, {
       pointToLayer: () => null,
@@ -84,8 +87,8 @@
       .catch(err => console.error("Error loading graduated circles WFS:", err));
 
     const baseMaps = {
-      "Mapbox Streets": mapbox,
-      "Google Hybrid": googleHybrid
+      "Mapbox Streets": mapboxStreets,
+      "Mapbox Satellite": mapboxSatellite
     };
 
     const overlayMaps = {
