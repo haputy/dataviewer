@@ -24,14 +24,20 @@
   <script>
     const map = L.map('map').setView([39.192, -84.4388], 12);
 
-    // Mapbox Basemap
-    L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
+    const mapboxStreets = L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
       attribution: '© OpenStreetMap, © Mapbox',
       tileSize: 512,
       zoomOffset: -1
-    }).addTo(map);
+    });
 
-    // GeoServer WMS Layer - butler_final
+    const mapboxSatellite = L.tileLayer('https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
+      attribution: '© Mapbox Satellite',
+      tileSize: 512,
+      zoomOffset: -1
+    });
+
+    mapboxStreets.addTo(map);
+
     const wmsLayer = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
       layers: 'region:butler_final',
       format: 'image/png',
@@ -39,82 +45,71 @@
       attribution: 'Zartico GeoServer'
     }).addTo(map);
 
-
-    // Radius scaling
     function getRadius(value) {
-  if (value >= 2000) return 50;
-  if (value >= 1000) return 35;
-  if (value >= 5000) return 25;
-  if (value >= 100) return 15;
-  if (value >= 1) return 8;
-  return 4; // fallback for 0 or missing values
-}
-
-    // Graduated Circles Layer (Centroids)
-   const poiCirclesLayer = L.geoJSON(null, {
-  pointToLayer: () => null,  // prevents default rendering
-  style: () => null,         // suppress styling for polygons
-  onEachFeature: function (feature, layer) {
-    const count = feature.properties.visitor_device_count || 1;
-
-    // Get polygon centroid
-    let center;
-    if (feature.geometry.type === "Polygon" || feature.geometry.type === "MultiPolygon") {
-      const latlngs = L.GeoJSON.coordsToLatLngs(feature.geometry.coordinates, feature.geometry.type === "Polygon" ? 1 : 2);
-      const polygon = L.polygon(latlngs);
-      center = polygon.getBounds().getCenter();
-    } else {
-      center = layer.getLatLng();
+      if (value >= 2000) return 50;
+      if (value >= 1000) return 35;
+      if (value >= 5000) return 25;
+      if (value >= 100) return 15;
+      if (value >= 1) return 8;
+      return 4;
     }
 
-    // Create manual circle marker at centroid
-    const circle = L.circleMarker(center, {
-      radius: getRadius(count),
-      fillColor: "#0074D9",
-      color: "#003366",
-      weight: 1,
-      opacity: 1,
-      fillOpacity: 0.6
-    }).bindPopup(
-      `<strong>${feature.properties.poi_name}</strong><br>` +
-      `Visitor Count: ${count}<br>` +
-      `Category: ${feature.properties.primary_category}`
-    );
+    const poiCirclesLayer = L.layerGroup();
 
-    circle.addTo(poiCirclesLayer);
-  },
-  filter: function (feature) {
-    const val = feature.properties.visitor_device_count;
-    return val >= 1 && val <= 82000;
-  }
-});
-
-    // Fetch WFS data
-    fetch(`https://dev-geoserver.zartico.com/geoserver/region/ows?` +
-      `service=WFS&version=1.0.0&request=GetFeature&` +
-      `typeName=region:butler_final&outputFormat=application/json`)
+    fetch(`https://dev-geoserver.zartico.com/geoserver/region/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=region:butler_final&outputFormat=application/json`)
       .then(res => res.json())
       .then(data => {
-        poiCirclesLayer.addData(data);
+        data.features.forEach(feature => {
+          const count = feature.properties.visitor_device_count || 1;
+
+          let center;
+          if (feature.geometry.type === "Polygon" || feature.geometry.type === "MultiPolygon") {
+            const coords = feature.geometry.coordinates;
+            let latSum = 0, lngSum = 0, n = 0;
+
+            const flatten = (arr) => arr.flat(Infinity);
+            const coordsFlat = feature.geometry.type === "Polygon" ? flatten(coords[0]) : flatten(coords[0][0]);
+
+            for (let i = 0; i < coordsFlat.length; i += 2) {
+              lngSum += coordsFlat[i];
+              latSum += coordsFlat[i + 1];
+              n++;
+            }
+
+            center = [latSum / n, lngSum / n];
+          }
+
+          const circle = L.circleMarker(center, {
+            radius: getRadius(count),
+            fillColor: "#0074D9",
+            color: "#003366",
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 0.6
+          }).bindPopup(
+            `<strong>${feature.properties.poi_name}</strong><br>` +
+            `Visitor Count: ${count}<br>` +
+            `Category: ${feature.properties.primary_category}`
+          );
+
+          poiCirclesLayer.addLayer(circle);
+        });
       })
       .catch(err => {
         console.error("Error loading graduated circles WFS:", err);
       });
-const baseMaps = {
-  "Mapbox Streets": L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
-    attribution: '© OpenStreetMap, © Mapbox',
-    tileSize: 512,
-    zoomOffset: -1
-  })
-};
 
-const overlayMaps = {
-  "Butler Polygons (WMS)": wmsLayer,
-  "Visitor Count Circles": poiCirclesLayer
-};
+    const baseMaps = {
+      "Mapbox Streets": mapboxStreets,
+      "Mapbox Satellite": mapboxSatellite
+    };
 
-baseMaps["Mapbox Streets"].addTo(map);
-L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
+    const overlayMaps = {
+      "Butler Polygons (WMS)": wmsLayer,
+      "Visitor Count Circles": poiCirclesLayer
+    };
+
+    L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
 
     map.on('overlayadd', function(e) {
       if (e.name === "Visitor Count Circles") {
@@ -128,7 +123,6 @@ L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
       }
     });
 
-    // Click popup from WFS
     map.on('click', function(e) {
       const lat = e.latlng.lat;
       const lon = e.latlng.lng;
