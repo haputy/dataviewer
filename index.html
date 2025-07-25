@@ -106,12 +106,10 @@
 
     // Layer toggle behavior
     const baseMaps = {
-      "Butler Polygons (WMS)": wmsLayer
-    };
-    const overlayMaps = {
-      "Visitor Count Circles": poiCirclesLayer
-    };
-    const layerControl = L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
+  "Butler Polygons (WMS)": wmsLayer,
+  "Visitor Count Circles": poiCirclesLayer
+};
+L.control.layers(baseMaps, null, { collapsed: false }).addTo(map);
 
     map.on('overlayadd', function(e) {
       if (e.name === "Visitor Count Circles") {
