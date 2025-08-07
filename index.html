@@ -53,12 +53,6 @@ L.control.zoom({ position: 'topright' }).addTo(map);
       attribution: 'Zartico GeoServer'
     }).addTo(map);
 
-    const removed_pois = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
-      layers: 'region:butler_now_excluded',
-      format: 'image/png',
-      transparent: true,
-      attribution: 'Zartico GeoServer'
-    }).addTo(map);
  
 
     function getRadius(value) {
