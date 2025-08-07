@@ -17,6 +17,10 @@
   </style>
 </head>
 <body>
+  <div style="position: absolute; z-index: 1000; background: white; padding: 10px; border-radius: 4px; top: 10px; left: 10px;">
+  <input type="text" id="searchId" placeholder="Enter POI ID" class="form-control" />
+  <button onclick="searchById()" class="btn btn-primary mt-2">Search</button>
+</div>
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -186,6 +190,46 @@
             .openOn(map);
         });
     });
+
+    function searchById() {
+  const poiId = document.getElementById('searchId').value.trim();
+
+  if (!poiId) {
+    alert("Please enter a POI ID.");
+    return;
+  }
+
+  const url = `https://dev-geoserver.zartico.com/geoserver/region/ows?` +
+    `service=WFS&version=1.0.0&request=GetFeature&` +
+    `typeName=region:lisa_testing_viz_0806&outputFormat=application/json&` +
+    `CQL_FILTER=id='${poiId}'`;
+
+  fetch(url)
+    .then(res => res.json())
+    .then(data => {
+      if (data.features.length > 0) {
+        const feature = data.features[0];
+        const bounds = L.geoJSON(feature).getBounds();
+        map.fitBounds(bounds);
+
+        L.popup({ maxWidth: 500 })
+          .setLatLng(bounds.getCenter())
+          .setContent(`
+            <strong>${feature.properties.poi_name || feature.id}</strong><br/>
+            Visitor Device Count: ${feature.properties.visitor_device_count}<br/>
+            Primary Category: ${feature.properties.primary_category || feature.properties.f_primary_id}
+          `)
+          .openOn(map);
+      } else {
+        alert("No feature found for that ID.");
+      }
+    })
+    .catch(err => {
+      console.error("Search error:", err);
+      alert("Error fetching data.");
+    });
+}
+    
   </script>
 </body>
 </html>
