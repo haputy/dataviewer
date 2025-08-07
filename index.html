@@ -153,13 +153,14 @@
               content += `
                 <div class="card mb-2">
                   <div class="card-body p-2">
-                    <h6 class="card-title"><strong>Name:</strong> ${f.properties['poi_name']}</h6>
+                    <h6 class="card-title"><strong>Name:</strong> ${f.properties['f_name']}</h6>
                     <ul class="list-group list-group-flush">
                       <li class="list-group-item px-2 py-1"><strong>Visitor Device Count:</strong> ${f.properties['visitor_device_count']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>Primary Category:</strong> ${f.properties['primary_category']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>Secondary Category:</strong> ${f.properties['secondary_category']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>NAICS Code:</strong> ${f.properties['vis_naics_code']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>POI ID:</strong> ${f.properties['poi_id']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>Primary Category:</strong> ${f.properties['f_primary_id']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>Secondary Category:</strong> ${f.properties['f_second_id']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>NAICS Code:</strong> ${f.properties['f_naics_code']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>POI ID:</strong> ${f.properties['id']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>POI ID:</strong> ${f.properties['name']}</li>
                     </ul>
                   </div>
                 </div>`;
