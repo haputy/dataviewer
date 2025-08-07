@@ -26,7 +26,11 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
-    const map = L.map('map').setView([39.392, -84.4388], 12);
+    const map = L.map('map', {
+  zoomControl: false
+}).setView([39.392, -84.4388], 12);
+
+L.control.zoom({ position: 'topright' }).addTo(map);
 
     const mapboxStreets = L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
       attribution: '© OpenStreetMap, © Mapbox',
@@ -164,7 +168,7 @@
                       <li class="list-group-item px-2 py-1"><strong>Secondary Category:</strong> ${f.properties['f_second_id']}</li>
                       <li class="list-group-item px-2 py-1"><strong>NAICS Code:</strong> ${f.properties['f_naics_code']}</li>
                       <li class="list-group-item px-2 py-1"><strong>POI ID:</strong> ${f.properties['id']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>POI ID:</strong> ${f.properties['name']}</li>
+                      <li class="list-group-item px-2 py-1"><strong>Combined Names:</strong> ${f.properties['name']}</li>
                     </ul>
                   </div>
                 </div>`;
