@@ -64,7 +64,7 @@
 
     const poiCirclesLayer = L.layerGroup();
 
-    fetch(`https://dev-geoserver.zartico.com/geoserver/region/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=region:butler_final&outputFormat=application/json`)
+    fetch(`https://dev-geoserver.zartico.com/geoserver/region/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=region:lisa_testing_viz_0806&outputFormat=application/json`)
       .then(res => res.json())
       .then(data => {
         data.features.forEach(feature => {
@@ -140,7 +140,7 @@
 
       const url = `https://dev-geoserver.zartico.com/geoserver/region/ows?` +
         `service=WFS&version=1.0.0&request=GetFeature&` +
-        `typeName=region:butler_final&outputFormat=application/json&` +
+        `typeName=region:lisa_testing_viz_0806&outputFormat=application/json&` +
         `bbox=${bbox},EPSG:4326&maxFeatures=100`;
 
       fetch(url)
