@@ -44,7 +44,7 @@
     </div>
   </div>
 
-  <div class="attribution">Data: <a href="https://dev-geoserver.zartico.com/geoserver/regions/wms" target="_blank" rel="noopener">GeoServer WMS</a>. Basemap: Mapbox.</div>
+  <div class="attribution">Data: <a href="https://dev-geoserver.zartico.com/geoserver/zartographer/wms" target="_blank" rel="noopener">GeoServer WMS</a>. Basemap: Mapbox.</div>
 
   <script>
     // 1) Mapbox credentials and style
@@ -64,13 +64,13 @@
 
     // 2) Add GeoServer WMS as a raster source
     // Use EPSG:3857 and the {bbox-epsg-3857} token so Mapbox GL can request tiles correctly.
-    const wmsBase = 'https://dev-geoserver.zartico.com/geoserver/regions/wms';
+    const wmsBase = 'https://dev-geoserver.zartico.com/geoserver/zartographer/wms';
 
     const wmsParams = new URLSearchParams({
       service: 'WMS',
       request: 'GetMap',
       version: '1.1.1',
-      layers: 'regions:county_progress',
+      layers: 'zartographer:county_progress',
       styles: '',
       format: 'image/png',
       transparent: 'true',
@@ -87,7 +87,7 @@
           type: 'raster',
           tiles: [tileTemplate],
           tileSize: 256,
-          attribution: 'GeoServer regions:county_progress'
+          attribution: 'GeoServer zartographer:county_progress'
         });
       }
 
