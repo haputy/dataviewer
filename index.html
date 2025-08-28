@@ -35,7 +35,7 @@
   </div>
   <div class="row dim">Click a polygon to identify. Scroll zoom is enabled.</div>
 </div>
-<div class="attribution">Basemap: Mapbox. Overlay: GeoServer region:synthetic_city_qc</div>
+<div class="attribution">Basemap: Mapbox. Overlay: GeoServer zartographer:synthetic_city_qc</div>
 
 <script>
   mapboxgl.accessToken = 'pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q';
@@ -54,8 +54,8 @@
   map.addControl(new mapboxgl.ScaleControl({ unit: 'imperial' }));
 
   // WMS raster source
-  const wmsBase = 'https://dev-geoserver.zartico.com/geoserver/region/wms';
-  const LAYER_NAME = 'region:synthetic_city_qc';
+  const wmsBase = 'https://dev-geoserver.zartico.com/geoserver/zartographer/wms';
+  const LAYER_NAME = 'zartographer:synthetic_city_qc';
 
   const wmsParams = new URLSearchParams({
     service: 'WMS',
@@ -73,7 +73,7 @@
 
   function addWms() {
     if (!map.getSource('synthetic-city-wms')) {
-      map.addSource('synthetic-city-wms', { type: 'raster', tiles, tileSize: 256, attribution: 'GeoServer region:synthetic_city_qc' });
+      map.addSource('synthetic-city-wms', { type: 'raster', tiles, tileSize: 256, attribution: 'GeoServer zartographer:synthetic_city_qc' });
     }
     if (!map.getLayer('synthetic-city')) {
       const labelLayer = map.getStyle().layers.find(l => l.type === 'symbol' && l.layout && l.layout['text-field'])?.id;
