@@ -1,120 +1,246 @@
+<!doctype html>
+<html>
 <head>
   <meta charset="utf-8" />
-  <title>Internal Data Viewer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link 
-    rel="stylesheet" 
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
-  />
-  <link 
-    rel="stylesheet" 
-    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-  />
+  <title>Client Regions Change Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet" />
   <style>
-    #map { height: 100vh; width: 100%; }
+    html,body,#map{height:100%;margin:0}
+    .panel{position:absolute;top:10px;left:10px;background:#fff;border:1px solid #ccc;padding:8px;max-width:320px;font:12px system-ui;line-height:1.35}
+    .panel label{display:block;margin:6px 0 2px}
+    .legend{margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .swatch{width:14px;height:14px;display:inline-block;border:1px solid #999;vertical-align:middle;margin-right:4px}
   </style>
 </head>
 <body>
-  <div id="map"></div>
+<div id="map"></div>
+<div class="panel">
+  <label>Client ID</label>
+  <input id="cid" style="width:100%" value="Green_Country_Tourism_OK"/>
+  <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+    <button id="apply">Apply</button>
+    <button id="fit">Fit to client</button>
+    <button id="bounds">Tile bounds</button>
+  </div>
+  <label style="margin-top:8px">Layers</label>
+  <div>
+    <label><input type="checkbox" id="chkChanges" checked/> Added and Removed</label><br/>
+    <label><input type="checkbox" id="chkOutline" checked/> New outline</label><br/>
+    <label><input type="checkbox" id="chkOld" checked/> Old outline (dashed)</label><br/>
+    <label><input type="checkbox" id="chkLabels" checked/> New labels</label>
+  </div>
+  <div class="legend">
+    <span class="swatch" style="background:#2b8a3e"></span> Added
+    <span class="swatch" style="background:#c92a2a"></span> Removed
+    <span class="swatch" style="background:#ff922b"></span> New outline
+    <span class="swatch" style="background:#4c6ef5"></span> Old outline
+  </div>
+  <div id="status" style="margin-top:6px;color:#444"></div>
+</div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+mapboxgl.accessToken = 'pk.eyJ1IjoiamF5a2luZ2hvcm4iLCJhIjoiY2tjY2gzNTBrMDQ5cTJ6bHI3MmU3OWRjdiJ9.M9_mnej57MG7QWyEhXks_Q';
 
-  <script>
-    const map = L.map('map').setView([42.3601, -71.0589], 12); // Boston
+// Query params to flip SRS or scheme without editing the file
+const params = new URLSearchParams(location.search);
+const CLIENT_DEFAULT = params.get('client') || 'Green_Country_Tourism_OK';
+const SRS    = params.get('srs')    || 'EPSG:900913'; // try EPSG:900913 or EPSG:3857
+const SCHEME = params.get('scheme') || 'tms';         // try tms or xyz
 
-    // Mapbox Basemap
-    L.tileLayer('https://api.mapbox.com/styles/v1/haputy/cm8g29e6v000v01sa4om903i0/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGFwdXR5IiwiYSI6ImNqZGNleTVnYjBpZDIycXM0b2ptdTVpZnIifQ.SQ8jV9GmA78fpzumnn23-Q', {
-      attribution: '© OpenStreetMap, © Mapbox',
-      tileSize: 512,
-      zoomOffset: -1
-    }).addTo(map);
+const TILE_HOST   = 'https://dev-geoserver.zartico.com/geoserver/gwc/service/tms/1.0.0';
+const L_CHANGE    = 'codecsflip:change_polys';
+const L_OUTLINES  = 'codecsflip:new_outlines';
+const L_LABELS    = 'codecsflip:new_labels';
+const L_OLDLINES  = 'codecsflip:old_outlines';        // new
 
-    // GeoServer WMS Layer
-    const wmsLayer = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
-      layers: 'region:deer_valley_gis_master',
-      format: 'image/png',
-      transparent: true,
-      attribution: 'Zartico GeoServer'
-    }).addTo(map);
+// GeoServer source-layer names
+const SL_CHANGE   = 'change_polys';
+const SL_OUTLINES = 'new_outlines';
+const SL_LABELS   = 'new_labels';
+const SL_OLDLINES = 'old_outlines';                   // new
 
-    // GeoServer WMS Layer
-    const wmsLayer2 = L.tileLayer.wms('https://dev-geoserver.zartico.com/geoserver/region/wms', {
-      layers: 'region:btm',
-      format: 'image/png',
-      transparent: true,
-      attribution: 'Zartico GeoServer'
-    }).addTo(map);
+const COLORS = {
+  added:   '#2b8a3e',
+  removed: '#c92a2a',
+  newLine: '#ff922b',
+  oldLine: '#4c6ef5',
+  label:   '#1f2937'
+};
 
-    // Handle map click → GetFeatureInfo request
- map.on('click', function(e) {
-  const lat = e.latlng.lat;
-  const lon = e.latlng.lng;
-  const buffer = 0.0000005; // Roughly ~50m buffer for bounding box
+function tmsUrl(layer) { return `${TILE_HOST}/${layer}@${SRS}@pbf/{z}/{x}/{y}.pbf`; }
 
-  // Create a bounding box around the clicked point
-  const minx = lon - buffer;
-  const miny = lat - buffer;
-  const maxx = lon + buffer;
-  const maxy = lat + buffer;
+let CLIENT_ID = CLIENT_DEFAULT;
+document.getElementById('cid').value = CLIENT_ID;
 
-  const bbox = `${minx},${miny},${maxx},${maxy}`;
-
-  const url = `https://dev-geoserver.zartico.com/geoserver/region/ows?` +
-    `service=WFS&version=1.0.0&request=GetFeature&` +
-    `typeName=region:deer_valley_gis_master` +
-    `outputFormat=application/json&` +
-    `bbox=${bbox},EPSG:4326&` +
-    `maxFeatures=100`;
-
-  fetch(url)
-    .then(response => response.json())
-    .then(data => {
-      if (data.features && data.features.length > 0) {
-            let content = `<div class="p-2" style="max-height:300px; overflow-y:auto;">`;
-            content += `<h5>${data.features.length} feature(s) found</h5>`;
-
-            data.features.forEach((f, i) => {
-              content += `
-                <div class="card mb-2">
-                  <div class="card-body p-2">
-                    <h6 class="card-title"><strong>Name:</strong>${f.properties['location_name']}</h6>
-                    <ul class="list-group list-group-flush">
-                      <li class="list-group-item px-2 py-1"><strong>${'Top Category(SG)'}:</strong> ${f.properties['top_category']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'Sub Category(SG)'}:</strong> ${f.properties['sub_category']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'Heirarchy Rank'}:</strong> ${f.properties['poi_tag']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'NAICS Code'}:</strong> ${f.properties['naics_code']}</li>
-                      <li class="list-group-item px-2 py-1"><strong>${'Flags'}:</strong> ${f.properties['flag']}</li>`
-                      ;
-
-
-
-              content += `
-                    </ul>
-                  </div>
-                </div>`;
-            });
-
-            content += `</div>`;
-
-            L.popup({ maxWidth: 500 })
-  .setLatLng(e.latlng)
-  .setContent(`<div style="max-height: 300px; overflow-y: auto;">${content}</div>`)
-  .openOn(map);
-      } else {
-        L.popup()
-          .setLatLng(e.latlng)
-          .setContent("No features found.")
-          .openOn(map);
-      }
-    })
-    .catch(err => {
-      console.error("WFS fetch error:", err);
-      L.popup()
-        .setLatLng(e.latlng)
-        .setContent("Error retrieving features.")
-        .openOn(map);
-    });
+const map = new mapboxgl.Map({
+  container: 'map',
+  style: 'mapbox://styles/mapbox/light-v11',
+  center: [-97, 38.5],
+  zoom: 4
 });
-  </script>
+
+map.on('error', e => {
+  console.error('Mapbox GL error:', e && e.error || e);
+  setStatus('Map error. See console.');
+});
+
+map.on('load', () => {
+  // Sources
+  map.addSource('change',    { type: 'vector', tiles: [tmsUrl(L_CHANGE)],   scheme: SCHEME, minzoom: 0, maxzoom: 22 });
+  map.addSource('outlines',  { type: 'vector', tiles: [tmsUrl(L_OUTLINES)], scheme: SCHEME, minzoom: 0, maxzoom: 22 });
+  map.addSource('oldlines',  { type: 'vector', tiles: [tmsUrl(L_OLDLINES)], scheme: SCHEME, minzoom: 0, maxzoom: 22 }); // new
+  map.addSource('labels',    { type: 'vector', tiles: [tmsUrl(L_LABELS)],   scheme: SCHEME, minzoom: 0, maxzoom: 22 });
+
+  // Change fills
+  map.addLayer({
+    id: 'added-fill',
+    type: 'fill',
+    source: 'change',
+    'source-layer': SL_CHANGE,
+    filter: ['all',
+      ['==', ['get', 'client_id'], CLIENT_ID],
+      ['==', ['get', 'change_type'], 'added']
+    ],
+    paint: { 'fill-color': COLORS.added, 'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.15,10,0.25] }
+  });
+
+  map.addLayer({
+    id: 'removed-fill',
+    type: 'fill',
+    source: 'change',
+    'source-layer': SL_CHANGE,
+    filter: ['all',
+      ['==', ['get', 'client_id'], CLIENT_ID],
+      ['==', ['get', 'change_type'], 'removed']
+    ],
+    paint: { 'fill-color': COLORS.removed, 'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.15,10,0.25] }
+  });
+
+  // Old outline first, dashed and muted, so new can sit on top
+  map.addLayer({
+    id: 'old-outline',
+    type: 'line',
+    source: 'oldlines',
+    'source-layer': SL_OLDLINES,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': COLORS.oldLine,
+      'line-width': ['interpolate',['linear'],['zoom'],4,0.4,8,0.9,12,1.4,14,2.0],
+      'line-dasharray': [2, 2],
+      'line-opacity': 0.8
+    }
+  });
+
+  // New outline on top, solid and warm color
+  map.addLayer({
+    id: 'new-outline',
+    type: 'line',
+    source: 'outlines',
+    'source-layer': SL_OUTLINES,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': COLORS.newLine,
+      'line-width': ['interpolate',['linear'],['zoom'],4,0.6,8,1.2,12,2.2,14,3.0],
+      'line-opacity': 0.95
+    }
+  });
+
+  // New labels
+  map.addLayer({
+    id: 'new-labels',
+    type: 'symbol',
+    source: 'labels',
+    'source-layer': SL_LABELS,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID],
+    layout: {
+      'text-field': ['get', 'region'],
+      'text-size': ['interpolate',['linear'],['zoom'],5,10,12,14],
+      'text-allow-overlap': false,
+      'text-padding': 2
+    },
+    paint: { 'text-color': COLORS.label, 'text-halo-color': '#ffffff', 'text-halo-width': 1 }
+  });
+
+  // UI
+  document.getElementById('apply').onclick = () => { CLIENT_ID = document.getElementById('cid').value.trim(); applyClientFilter(); };
+  document.getElementById('fit').onclick = () => fitToClientFromTiles();
+  document.getElementById('bounds').onclick = () => { map.showTileBoundaries = !map.showTileBoundaries; };
+
+  document.getElementById('chkChanges').onchange = (e) => setVis(['added-fill','removed-fill'], e.target.checked);
+  document.getElementById('chkOutline').onchange = (e) => setVis(['new-outline'], e.target.checked);
+  document.getElementById('chkOld').onchange     = (e) => setVis(['old-outline'], e.target.checked);   // new
+  document.getElementById('chkLabels').onchange  = (e) => setVis(['new-labels'], e.target.checked);
+
+  setStatus(`SRS=${SRS}, scheme=${SCHEME}.`);
+});
+
+// Filtering
+function applyClientFilter() {
+  const f = ['==', ['get', 'client_id'], CLIENT_ID];
+  const fAdded   = ['all', f, ['==', ['get', 'change_type'], 'added']];
+  const fRemoved = ['all', f, ['==', ['get', 'change_type'], 'removed']];
+
+  safeSetFilter('added-fill', fAdded);
+  safeSetFilter('removed-fill', fRemoved);
+  safeSetFilter('old-outline', f);   // new
+  safeSetFilter('new-outline', f);
+  safeSetFilter('new-labels', f);
+
+  setStatus(`Client set to ${CLIENT_ID}`);
+}
+
+// Fit to client from rendered tiles
+async function fitToClientFromTiles() {
+  applyClientFilter();
+  await idle();
+
+  const layers = ['new-outline','old-outline','added-fill','removed-fill'];
+  let features = [];
+  layers.forEach(id => {
+    if (map.getLayer(id)) {
+      try { features = features.concat(map.queryRenderedFeatures({ layers: [id] })); } catch(e) {}
+    }
+  });
+
+  if (!features.length) { setStatus('No features found at current view. Zooming out.'); map.easeTo({ zoom: 3, duration: 0 }); await idle(); }
+
+  if (!features.length) { setStatus('Could not compute bounds. Check client_id or data.'); return; }
+
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  features.forEach(f => {
+    const g = f.geometry;
+    extractCoords(g.coordinates, g.type).forEach(([x,y]) => {
+      if (x<minX) minX=x; if (y<minY) minY=y; if (x>maxX) maxX=x; if (y>maxY) maxY=y;
+    });
+  });
+  if (isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY)) {
+    map.fitBounds([[minX, minY],[maxX, maxY]], { padding: 30, duration: 0 });
+    setStatus('Fit to client from tiles.');
+  } else {
+    setStatus('Bounds calculation failed.');
+  }
+}
+
+function extractCoords(arr, type, out=[]) {
+  if (type === 'Point') return [arr];
+  if (type === 'MultiPoint' || type === 'LineString') return arr;
+  if (type === 'MultiLineString' || type === 'Polygon') { arr.forEach(a => a.forEach(pt => out.push(pt))); return out; }
+  if (type === 'MultiPolygon') { arr.forEach(p => p.forEach(r => r.forEach(pt => out.push(pt)))); return out; }
+  try { JSON.stringify(arr, (k,v) => Array.isArray(v) && typeof v[0] === 'number' && v.length===2 ? out.push(v) : v); } catch(_) {}
+  return out;
+}
+
+function safeSetFilter(id, filter) { if (map.getLayer(id)) map.setFilter(id, filter); }
+
+function setVis(ids, on) { ids.forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); }); }
+
+function idle() { return new Promise(res => map.once('idle', res)); }
+
+function setStatus(msg) { const el = document.getElementById('status'); if (el) el.textContent = msg; }
+</script>
 </body>
 </html>
