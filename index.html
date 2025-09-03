@@ -8,72 +8,108 @@
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet" />
   <style>
     html,body,#map{height:100%;margin:0}
-    .panel{position:absolute;top:10px;left:10px;background:#fff;border:1px solid #ccc;padding:8px;max-width:340px;font:12px system-ui;line-height:1.35}
-    .panel label{display:block;margin:6px 0 2px}
+
+    /* Material-like panel */
+    .panel{
+      position:absolute;top:16px;left:16px;max-width:360px;
+      background:#fff;border-radius:12px;padding:14px 16px;
+      box-shadow:0 4px 14px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12);
+      font:13px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color:#1f2937
+    }
+    .panel h3{margin:0 0 8px 0;font-size:14px;font-weight:600;letter-spacing:.3px}
+    .field{margin:10px 0 6px}
+    .field label{display:block;font-size:11px;color:#6b7280;margin-bottom:4px}
+    .input{width:100%;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;outline:none}
+    .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+
+    /* Buttons */
+    .btn{
+      appearance:none;border:0;border-radius:10px;padding:8px 12px;
+      background:#1976d2;color:#fff;font-weight:600;cursor:pointer;
+      box-shadow:0 2px 6px rgba(25,118,210,.35)
+    }
+    .btn:hover{filter:brightness(1.05)}
+    .btn.secondary{background:#e5e7eb;color:#111827;box-shadow:none}
+    .switches{margin-top:8px}
+    .switches label{display:block;margin:6px 0}
+
+    /* Legend chips */
     .legend{margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .swatch{width:14px;height:14px;display:inline-block;border:1px solid #999;vertical-align:middle;margin-right:4px}
+    .swatch{width:14px;height:14px;display:inline-block;border:1px solid #999;vertical-align:middle;margin-right:4px;border-radius:4px}
+
+    #status{margin-top:8px;color:#374151;font-size:12px}
+
+    /* Copy-to-clipboard button in popup */
+    .popup-copy-btn{
+    margin-left:8px;padding:2px 8px;border:1px solid #d1d5db;border-radius:8px;
+    background:#f3f4f6;cursor:pointer;font-size:11px
+    }
+    .popup-copy-btn:hover{background:#e5e7eb}
+    .popup-copied{margin-left:6px;font-size:11px;color:#059669;display:none}
   </style>
 </head>
 <body>
 <div id="map"></div>
 
 <div class="panel">
-  <label>Client ID</label>
-  <input id="cid" style="width:100%" value="Green_Country_Tourism_OK"/>
-  <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
-    <button id="apply">Apply</button>
-    <button id="fit">Fit to client</button>
-    <button id="bounds">Tile bounds</button>
+  <h3>Client Regions</h3>
+  <div class="field">
+    <label>Client ID</label>
+    <input id="cid" class="input" value="Green_Country_Tourism_OK"/>
   </div>
-  <label style="margin-top:8px">Layers</label>
-  <div>
-    <label><input type="checkbox" id="chkNewPoly" checked/> New regions (polygons)</label><br/>
-    <label><input type="checkbox" id="chkOldPoly" checked/> Old regions (polygons)</label><br/>
-    <label><input type="checkbox" id="chkChanges" checked/> Added and Removed</label><br/>
+  <div class="row">
+    <button id="apply" class="btn">Apply</button>
+    <button id="fit" class="btn">Fit to client</button>
+    <button id="bounds" class="btn secondary">Tile bounds</button>
+  </div>
+
+  <div class="switches">
+    <h3 style="margin-top:10px">Layers</h3>
+    <label><input type="checkbox" id="chkNewOutline" checked/> New regions (outline)</label>
+    <label><input type="checkbox" id="chkOldOutline" checked/> Old regions (outline)</label>
+    <label><input type="checkbox" id="chkTracts" /> Census tracts (outline)</label>
     <label><input type="checkbox" id="chkLabels" checked/> New labels</label>
   </div>
+
   <div class="legend">
-    <span class="swatch" style="background:#ffb86b"></span> New regions
-    <span class="swatch" style="background:#9bb5ff"></span> Old regions
-    <span class="swatch" style="background:#2b8a3e"></span> Added
-    <span class="swatch" style="background:#c92a2a"></span> Removed
+    <span class="swatch" style="background:#ff922b"></span> New outline
+    <span class="swatch" style="background:#4c6ef5"></span> Old outline
+    <span class="swatch" style="background:#f4a3a3"></span> Census tracts
   </div>
-  <div id="status" style="margin-top:6px;color:#444"></div>
+  <div id="status"></div>
 </div>
 
 <script>
 mapboxgl.accessToken = 'pk.eyJ1IjoiamF5a2luZ2hvcm4iLCJhIjoiY2tjY2gzNTBrMDQ5cTJ6bHI3MmU3OWRjdiJ9.M9_mnej57MG7QWyEhXks_Q';
 
-// Query params to flip SRS or scheme without editing the file
+// Params for SRS/scheme if needed
 const params  = new URLSearchParams(location.search);
 const CLIENT_DEFAULT = params.get('client') || 'Green_Country_Tourism_OK';
-const SRS    = params.get('srs')    || 'EPSG:900913'; // EPSG:900913 or EPSG:3857
-const SCHEME = params.get('scheme') || 'tms';         // tms or xyz
+const SRS    = params.get('srs')    || 'EPSG:900913';
+const SCHEME = params.get('scheme') || 'tms';
 
 // GeoServer TMS base
 const TILE_HOST  = 'https://dev-geoserver.zartico.com/geoserver/gwc/service/tms/1.0.0';
 
-// Layers (workspace:layer) and source-layer names (bare layer names)
+// workspace:layer and source-layer names
 const L_NEWREG   = 'codecsflip:regions_current';
 const SL_NEWREG  = 'regions_current';
 const L_OLDREG   = 'codecsflip:regions_legacy';
 const SL_OLDREG  = 'regions_legacy';
-
-const L_CHANGE   = 'codecsflip:change_polys';
-const SL_CHANGE  = 'change_polys';
-
 const L_LABELS   = 'codecsflip:new_labels';
 const SL_LABELS  = 'new_labels';
+
+// Census tracts layer
+const L_TRACTS   = 'zartographer:census_tract_boundaries';
+const SL_TRACTS  = 'census_tract_boundaries';
 
 function tmsUrl(layer) { return `${TILE_HOST}/${layer}@${SRS}@pbf/{z}/{x}/{y}.pbf`; }
 
 const COLORS = {
-  newFill:    '#ffb86b',
   newLine:    '#ff922b',
-  oldFill:    '#9bb5ff',
   oldLine:    '#4c6ef5',
-  added:      '#2b8a3e',
-  removed:    '#c92a2a',
+  tractsLine: '#f4a3a3',
   label:      '#1f2937'
 };
 
@@ -82,37 +118,47 @@ document.getElementById('cid').value = CLIENT_ID;
 
 const map = new mapboxgl.Map({
   container: 'map',
-  // use your preferred style
   style: 'mapbox://styles/jaykinghorn/ck10yaqx8070o1dossjhhc0fb',
   center: [-97, 38.5],
   zoom: 4
 });
 
-map.on('error', e => {
-  console.error('Mapbox GL error:', e && e.error || e);
-  setStatus('Map error. See console.');
-});
+map.on('error', e => { console.error('Mapbox GL error:', e && e.error || e); setStatus('Map error. See console.'); });
 
 map.on('load', () => {
-  // Sources
+  // sources
   map.addSource('newRegions', { type: 'vector', tiles: [tmsUrl(L_NEWREG)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
   map.addSource('oldRegions', { type: 'vector', tiles: [tmsUrl(L_OLDREG)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
-  map.addSource('change',     { type: 'vector', tiles: [tmsUrl(L_CHANGE)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
   map.addSource('labels',     { type: 'vector', tiles: [tmsUrl(L_LABELS)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
+  map.addSource('tracts',     { type: 'vector', tiles: [tmsUrl(L_TRACTS)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
 
-  // Old regions polygons - below new
+  // Invisible hit-polygons for click/fit (kept visible with 0 opacity)
   map.addLayer({
-    id: 'old-poly-fill',
+    id: 'new-hit',
+    type: 'fill',
+    source: 'newRegions',
+    'source-layer': SL_NEWREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID],
+    paint: { 'fill-opacity': 0 }
+  });
+  map.addLayer({
+    id: 'old-hit',
     type: 'fill',
     source: 'oldRegions',
     'source-layer': SL_OLDREG,
     filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    paint: {
-      'fill-color': COLORS.oldFill,
-      'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.12,10,0.20]
-    }
+    paint: { 'fill-opacity': 0 }
+  });
+  // Tracts hit-layer (always on so we can get GEOID even if outline is hidden)
+  map.addLayer({
+    id: 'tracts-hit',
+    type: 'fill',
+    source: 'tracts',
+    'source-layer': SL_TRACTS,
+    paint: { 'fill-opacity': 0 }
   });
 
+  // Region outlines
   map.addLayer({
     id: 'old-poly-outline',
     type: 'line',
@@ -120,24 +166,7 @@ map.on('load', () => {
     'source-layer': SL_OLDREG,
     filter: ['==', ['get', 'client_id'], CLIENT_ID],
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': COLORS.oldLine,
-      'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,1.0,14,1.6],
-      'line-opacity': 0.7
-    }
-  });
-
-  // New regions polygons - above old
-  map.addLayer({
-    id: 'new-poly-fill',
-    type: 'fill',
-    source: 'newRegions',
-    'source-layer': SL_NEWREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    paint: {
-      'fill-color': COLORS.newFill,
-      'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.14,10,0.24]
-    }
+    paint: { 'line-color': COLORS.oldLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,1.0,14,1.6], 'line-opacity': 0.95 }
   });
 
   map.addLayer({
@@ -147,148 +176,123 @@ map.on('load', () => {
     'source-layer': SL_NEWREG,
     filter: ['==', ['get', 'client_id'], CLIENT_ID],
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': COLORS.newLine,
-      'line-width': ['interpolate',['linear'],['zoom'],4,0.5,10,1.4,14,2.2],
-      'line-opacity': 0.95
-    }
+    paint: { 'line-color': COLORS.newLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.5,10,1.4,14,2.2], 'line-opacity': 0.95 }
   });
 
-  // Change polygons - optional overlay
+  // Census tracts outline (off by default)
   map.addLayer({
-    id: 'added-fill',
-    type: 'fill',
-    source: 'change',
-    'source-layer': SL_CHANGE,
-    filter: ['all',
-      ['==', ['get', 'client_id'], CLIENT_ID],
-      ['==', ['get', 'change_type'], 'added']
-    ],
-    paint: { 'fill-color': COLORS.added, 'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.12,10,0.22] }
+    id: 'tracts-outline',
+    type: 'line',
+    source: 'tracts',
+    'source-layer': SL_TRACTS,
+    layout: { 'line-cap': 'round', 'line-join': 'round', 'visibility': 'none' },
+    paint: { 'line-color': COLORS.tractsLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,0.9,14,1.4], 'line-opacity': 0.9 }
   });
 
-  map.addLayer({
-    id: 'removed-fill',
-    type: 'fill',
-    source: 'change',
-    'source-layer': SL_CHANGE,
-    filter: ['all',
-      ['==', ['get', 'client_id'], CLIENT_ID],
-      ['==', ['get', 'change_type'], 'removed']
-    ],
-    paint: { 'fill-color': COLORS.removed, 'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.12,10,0.22] }
-  });
-
-  // Labels from new_labels
+  // Labels
   map.addLayer({
     id: 'new-labels',
     type: 'symbol',
     source: 'labels',
     'source-layer': SL_LABELS,
     filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    layout: {
-      'text-field': ['get', 'region'],
-      'text-size': ['interpolate',['linear'],['zoom'],5,10,12,14],
-      'text-allow-overlap': false,
-      'text-padding': 2
-    },
+    layout: { 'text-field': ['get', 'region'], 'text-size': ['interpolate',['linear'],['zoom'],5,11,12,14], 'text-allow-overlap': false, 'text-padding': 2 },
     paint: { 'text-color': COLORS.label, 'text-halo-color': '#ffffff', 'text-halo-width': 1 }
   });
 
-  // Click popup - read both polygons at point
-  map.on('click', (e) => {
-    const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
+  // Click popup: show New region, Old region, Tract GEOID
+  // Click popup: show New region, Old region, Tract GEOID with a copy button
+map.on('click', (e) => {
+  const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
+  const newFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] })
+                     .find(f => f.properties.client_id === CLIENT_ID);
+  const oldFeat = map.queryRenderedFeatures(box, { layers: ['old-hit'] })
+                     .find(f => f.properties.client_id === CLIENT_ID);
+  const tract   = map.queryRenderedFeatures(box, { layers: ['tracts-hit'] })[0];
 
-    const newFeats = map.queryRenderedFeatures(box, { layers: ['new-poly-fill'] })
-      .filter(f => f.properties.client_id === CLIENT_ID);
-    const oldFeats = map.queryRenderedFeatures(box, { layers: ['old-poly-fill'] })
-      .filter(f => f.properties.client_id === CLIENT_ID);
-    const changeFeats = map.queryRenderedFeatures(box, { layers: ['added-fill','removed-fill'] });
+  const newName = newFeat?.properties?.region || 'None';
+  const oldName = oldFeat?.properties?.region || 'None';
+  const geoid   = tract?.properties?.geoid || '';
 
-    const newName = newFeats[0]?.properties?.region || 'None';
-    const oldName = oldFeats[0]?.properties?.region || 'None';
-    const changeAtPoint = changeFeats[0]?.properties?.change_type || 'unknown';
+  const hasGEOID = geoid && geoid !== 'None';
 
-    const html = `
-      <div style="font:12px system-ui;line-height:1.35">
-        <div><strong>New region</strong>: ${escapeHtml(newName)}</div>
-        <div><strong>Old region</strong>: ${escapeHtml(oldName)}</div>
-        <div><strong>Change here</strong>: ${escapeHtml(String(changeAtPoint))}</div>
+  const html = `
+    <div style="font:12px system-ui;line-height:1.35">
+      <div><strong>New region</strong>: ${escapeHtml(newName)}</div>
+      <div><strong>Old region</strong>: ${escapeHtml(oldName)}</div>
+      <div>
+        <strong>Tract GEOID</strong>: <span class="geoid-val">${escapeHtml(geoid || 'None')}</span>
+        ${hasGEOID ? `<button class="popup-copy-btn" data-geoid="${escapeHtml(geoid)}">Copy</button><span class="popup-copied">Copied</span>` : ``}
       </div>
-    `;
-    new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
-  });
+    </div>`;
 
-  // UI
+  const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+
+  // Wire up the Copy button for this popup instance
+  const el = popup.getElement();
+  const btn = el.querySelector('.popup-copy-btn');
+  const ok  = el.querySelector('.popup-copied');
+
+  if (btn) {
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const value = btn.getAttribute('data-geoid') || '';
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch (_) {
+        // Fallback for older browsers
+        const ta = document.createElement('textarea');
+        ta.value = value; document.body.appendChild(ta);
+        ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+      }
+      if (ok) {
+        ok.style.display = 'inline';
+        setTimeout(() => { ok.style.display = 'none'; }, 1200);
+      }
+    });
+  }
+});
+
+  // UI wiring
   document.getElementById('apply').onclick = () => { CLIENT_ID = document.getElementById('cid').value.trim(); applyClientFilter(); };
   document.getElementById('fit').onclick   = () => fitToClientFromTiles();
   document.getElementById('bounds').onclick= () => { map.showTileBoundaries = !map.showTileBoundaries; };
 
-  document.getElementById('chkNewPoly').onchange = (e) => setVis(['new-poly-fill','new-poly-outline'], e.target.checked);
-  document.getElementById('chkOldPoly').onchange = (e) => setVis(['old-poly-fill','old-poly-outline'], e.target.checked);
-  document.getElementById('chkChanges').onchange = (e) => setVis(['added-fill','removed-fill'], e.target.checked);
-  document.getElementById('chkLabels').onchange  = (e) => setVis(['new-labels'], e.target.checked);
+  document.getElementById('chkNewOutline').onchange = (e) => setVis('new-poly-outline', e.target.checked);
+  document.getElementById('chkOldOutline').onchange = (e) => setVis('old-poly-outline', e.target.checked);
+  document.getElementById('chkTracts').onchange     = (e) => setVis('tracts-outline', e.target.checked);
+  document.getElementById('chkLabels').onchange     = (e) => setVis('new-labels', e.target.checked);
 
   setStatus(`SRS=${SRS}, scheme=${SCHEME}.`);
 });
 
-// Filtering
+// Filters
 function applyClientFilter() {
   const f = ['==', ['get', 'client_id'], CLIENT_ID];
-  const fAdded   = ['all', f, ['==', ['get', 'change_type'], 'added']];
-  const fRemoved = ['all', f, ['==', ['get', 'change_type'], 'removed']];
-
-  safeSetFilter('new-poly-fill',   f);
-  safeSetFilter('new-poly-outline',f);
-  safeSetFilter('old-poly-fill',   f);
-  safeSetFilter('old-poly-outline',f);
-  safeSetFilter('added-fill',      fAdded);
-  safeSetFilter('removed-fill',    fRemoved);
-  safeSetFilter('new-labels',      f);
-
+  safeSetFilter('new-hit',          f);
+  safeSetFilter('old-hit',          f);
+  safeSetFilter('new-poly-outline', f);
+  safeSetFilter('old-poly-outline', f);
+  safeSetFilter('new-labels',       f);
   setStatus(`Client set to ${CLIENT_ID}`);
 }
 
-// Fit to client from rendered features
+// Fit uses invisible hit layers
 async function fitToClientFromTiles() {
   applyClientFilter();
   await idle();
-
-  const layers = ['new-poly-fill','old-poly-fill','added-fill','removed-fill'];
+  const layers = ['new-hit','old-hit'];
   let features = [];
-  layers.forEach(id => {
-    if (map.getLayer(id)) {
-      try { features = features.concat(map.queryRenderedFeatures({ layers: [id] })); } catch(_) {}
-    }
-  });
-
-  if (!features.length) {
-    setStatus('No features found at current view. Zooming out.');
-    map.easeTo({ zoom: 3, duration: 0 });
-    await idle();
-    layers.forEach(id => {
-      if (map.getLayer(id)) {
-        try { features = features.concat(map.queryRenderedFeatures({ layers: [id] })); } catch(_) {}
-      }
-    });
-  }
-
+  layers.forEach(id => { if (map.getLayer(id)) { try { features = features.concat(map.queryRenderedFeatures({ layers: [id] })); } catch(_) {} } });
+  if (!features.length) { setStatus('No features at view. Zooming out.'); map.easeTo({ zoom: 3, duration: 0 }); await idle(); }
   if (!features.length) { setStatus('Could not compute bounds. Check client_id or data.'); return; }
-
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   features.forEach(f => {
     const g = f.geometry;
-    extractCoords(g.coordinates, g.type).forEach(([x,y]) => {
-      if (x<minX) minX=x; if (y<minY) minY=y; if (x>maxX) maxX=x; if (y>maxY) maxY=y;
-    });
+    extractCoords(g.coordinates, g.type).forEach(([x,y]) => { if (x<minX) minX=x; if (y<minY) minY=y; if (x>maxX) maxX=x; if (y>maxY) maxY=y; });
   });
-
-  if (isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY)) {
-    map.fitBounds([[minX, minY],[maxX, maxY]], { padding: 30, duration: 0 });
-    setStatus('Fit to client from tiles.');
-  } else {
-    setStatus('Bounds calculation failed.');
-  }
+  if (isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY)) map.fitBounds([[minX, minY],[maxX, maxY]], { padding: 30, duration: 0 });
 }
 
 // Helpers
@@ -300,9 +304,8 @@ function extractCoords(arr, type, out=[]) {
   try { JSON.stringify(arr, (k,v) => Array.isArray(v) && typeof v[0] === 'number' && v.length===2 ? out.push(v) : v); } catch(_) {}
   return out;
 }
-
 function safeSetFilter(id, filter) { if (map.getLayer(id)) map.setFilter(id, filter); }
-function setVis(ids, on) { ids.forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); }); }
+function setVis(id, on) { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); }
 function idle() { return new Promise(res => map.once('idle', res)); }
 function setStatus(msg) { const el = document.getElementById('status'); if (el) el.textContent = msg; }
 function escapeHtml(str) { return String(str).replace(/[&<>"'`=\/]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','/':'&#x2F;','`':'&#x60;','=':'&#x3D;'}[s])); }
