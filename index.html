@@ -2,13 +2,13 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Client Regions Viewer</title>
+  <title>Client Regions Change Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet" />
   <style>
     html,body,#map{height:100%;margin:0}
-    .panel{position:absolute;top:10px;left:10px;background:#fff;border:1px solid #ccc;padding:8px;max-width:320px;font:12px system-ui;line-height:1.35}
+    .panel{position:absolute;top:10px;left:10px;background:#fff;border:1px solid #ccc;padding:8px;max-width:340px;font:12px system-ui;line-height:1.35}
     .panel label{display:block;margin:6px 0 2px}
     .legend{margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .swatch{width:14px;height:14px;display:inline-block;border:1px solid #999;vertical-align:middle;margin-right:4px}
@@ -16,6 +16,7 @@
 </head>
 <body>
 <div id="map"></div>
+
 <div class="panel">
   <label>Client ID</label>
   <input id="cid" style="width:100%" value="Green_Country_Tourism_OK"/>
@@ -26,16 +27,16 @@
   </div>
   <label style="margin-top:8px">Layers</label>
   <div>
+    <label><input type="checkbox" id="chkNewPoly" checked/> New regions (polygons)</label><br/>
+    <label><input type="checkbox" id="chkOldPoly" checked/> Old regions (polygons)</label><br/>
     <label><input type="checkbox" id="chkChanges" checked/> Added and Removed</label><br/>
-    <label><input type="checkbox" id="chkOutline" checked/> New outline</label><br/>
-    <label><input type="checkbox" id="chkOld" checked/> Old outline (dashed)</label><br/>
     <label><input type="checkbox" id="chkLabels" checked/> New labels</label>
   </div>
   <div class="legend">
+    <span class="swatch" style="background:#ffb86b"></span> New regions
+    <span class="swatch" style="background:#9bb5ff"></span> Old regions
     <span class="swatch" style="background:#2b8a3e"></span> Added
     <span class="swatch" style="background:#c92a2a"></span> Removed
-    <span class="swatch" style="background:#ff922b"></span> New outline
-    <span class="swatch" style="background:#4c6ef5"></span> Old outline
   </div>
   <div id="status" style="margin-top:6px;color:#444"></div>
 </div>
@@ -44,38 +45,44 @@
 mapboxgl.accessToken = 'pk.eyJ1IjoiamF5a2luZ2hvcm4iLCJhIjoiY2tjY2gzNTBrMDQ5cTJ6bHI3MmU3OWRjdiJ9.M9_mnej57MG7QWyEhXks_Q';
 
 // Query params to flip SRS or scheme without editing the file
-const params = new URLSearchParams(location.search);
+const params  = new URLSearchParams(location.search);
 const CLIENT_DEFAULT = params.get('client') || 'Green_Country_Tourism_OK';
-const SRS    = params.get('srs')    || 'EPSG:900913'; // try EPSG:900913 or EPSG:3857
-const SCHEME = params.get('scheme') || 'tms';         // try tms or xyz
+const SRS    = params.get('srs')    || 'EPSG:900913'; // EPSG:900913 or EPSG:3857
+const SCHEME = params.get('scheme') || 'tms';         // tms or xyz
 
-const TILE_HOST   = 'https://dev-geoserver.zartico.com/geoserver/gwc/service/tms/1.0.0';
-const L_CHANGE    = 'codecsflip:change_polys';
-const L_OUTLINES  = 'codecsflip:new_outlines';
-const L_LABELS    = 'codecsflip:new_labels';
-const L_OLDLINES  = 'codecsflip:old_outlines';        // new
+// GeoServer TMS base
+const TILE_HOST  = 'https://dev-geoserver.zartico.com/geoserver/gwc/service/tms/1.0.0';
 
-// GeoServer source-layer names
-const SL_CHANGE   = 'change_polys';
-const SL_OUTLINES = 'new_outlines';
-const SL_LABELS   = 'new_labels';
-const SL_OLDLINES = 'old_outlines';                   // new
+// Layers (workspace:layer) and source-layer names (bare layer names)
+const L_NEWREG   = 'codecsflip:regions_current';
+const SL_NEWREG  = 'regions_current';
+const L_OLDREG   = 'codecsflip:regions_legacy';
+const SL_OLDREG  = 'regions_legacy';
 
-const COLORS = {
-  added:   '#2b8a3e',
-  removed: '#c92a2a',
-  newLine: '#ff922b',
-  oldLine: '#4c6ef5',
-  label:   '#1f2937'
-};
+const L_CHANGE   = 'codecsflip:change_polys';
+const SL_CHANGE  = 'change_polys';
+
+const L_LABELS   = 'codecsflip:new_labels';
+const SL_LABELS  = 'new_labels';
 
 function tmsUrl(layer) { return `${TILE_HOST}/${layer}@${SRS}@pbf/{z}/{x}/{y}.pbf`; }
+
+const COLORS = {
+  newFill:    '#ffb86b',
+  newLine:    '#ff922b',
+  oldFill:    '#9bb5ff',
+  oldLine:    '#4c6ef5',
+  added:      '#2b8a3e',
+  removed:    '#c92a2a',
+  label:      '#1f2937'
+};
 
 let CLIENT_ID = CLIENT_DEFAULT;
 document.getElementById('cid').value = CLIENT_ID;
 
 const map = new mapboxgl.Map({
   container: 'map',
+  // use your preferred style
   style: 'mapbox://styles/jaykinghorn/ck10yaqx8070o1dossjhhc0fb',
   center: [-97, 38.5],
   zoom: 4
@@ -88,12 +95,66 @@ map.on('error', e => {
 
 map.on('load', () => {
   // Sources
-  map.addSource('change',    { type: 'vector', tiles: [tmsUrl(L_CHANGE)],   scheme: SCHEME, minzoom: 0, maxzoom: 22 });
-  map.addSource('outlines',  { type: 'vector', tiles: [tmsUrl(L_OUTLINES)], scheme: SCHEME, minzoom: 0, maxzoom: 22 });
-  map.addSource('oldlines',  { type: 'vector', tiles: [tmsUrl(L_OLDLINES)], scheme: SCHEME, minzoom: 0, maxzoom: 22 }); // new
-  map.addSource('labels',    { type: 'vector', tiles: [tmsUrl(L_LABELS)],   scheme: SCHEME, minzoom: 0, maxzoom: 22 });
+  map.addSource('newRegions', { type: 'vector', tiles: [tmsUrl(L_NEWREG)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
+  map.addSource('oldRegions', { type: 'vector', tiles: [tmsUrl(L_OLDREG)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
+  map.addSource('change',     { type: 'vector', tiles: [tmsUrl(L_CHANGE)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
+  map.addSource('labels',     { type: 'vector', tiles: [tmsUrl(L_LABELS)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
 
-  // Change fills
+  // Old regions polygons - below new
+  map.addLayer({
+    id: 'old-poly-fill',
+    type: 'fill',
+    source: 'oldRegions',
+    'source-layer': SL_OLDREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID],
+    paint: {
+      'fill-color': COLORS.oldFill,
+      'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.12,10,0.20]
+    }
+  });
+
+  map.addLayer({
+    id: 'old-poly-outline',
+    type: 'line',
+    source: 'oldRegions',
+    'source-layer': SL_OLDREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': COLORS.oldLine,
+      'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,1.0,14,1.6],
+      'line-opacity': 0.7
+    }
+  });
+
+  // New regions polygons - above old
+  map.addLayer({
+    id: 'new-poly-fill',
+    type: 'fill',
+    source: 'newRegions',
+    'source-layer': SL_NEWREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID],
+    paint: {
+      'fill-color': COLORS.newFill,
+      'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.14,10,0.24]
+    }
+  });
+
+  map.addLayer({
+    id: 'new-poly-outline',
+    type: 'line',
+    source: 'newRegions',
+    'source-layer': SL_NEWREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': COLORS.newLine,
+      'line-width': ['interpolate',['linear'],['zoom'],4,0.5,10,1.4,14,2.2],
+      'line-opacity': 0.95
+    }
+  });
+
+  // Change polygons - optional overlay
   map.addLayer({
     id: 'added-fill',
     type: 'fill',
@@ -103,7 +164,7 @@ map.on('load', () => {
       ['==', ['get', 'client_id'], CLIENT_ID],
       ['==', ['get', 'change_type'], 'added']
     ],
-    paint: { 'fill-color': COLORS.added, 'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.15,10,0.25] }
+    paint: { 'fill-color': COLORS.added, 'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.12,10,0.22] }
   });
 
   map.addLayer({
@@ -115,41 +176,10 @@ map.on('load', () => {
       ['==', ['get', 'client_id'], CLIENT_ID],
       ['==', ['get', 'change_type'], 'removed']
     ],
-    paint: { 'fill-color': COLORS.removed, 'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.15,10,0.25] }
+    paint: { 'fill-color': COLORS.removed, 'fill-opacity': ['interpolate',['linear'],['zoom'],4,0.12,10,0.22] }
   });
 
-  // Old outline first, dashed and muted, so new can sit on top
-  map.addLayer({
-    id: 'old-outline',
-    type: 'line',
-    source: 'oldlines',
-    'source-layer': SL_OLDLINES,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': COLORS.oldLine,
-      'line-width': ['interpolate',['linear'],['zoom'],4,0.4,8,0.9,12,1.4,14,2.0],
-      'line-dasharray': [2, 2],
-      'line-opacity': 0.8
-    }
-  });
-
-  // New outline on top, solid and warm color
-  map.addLayer({
-    id: 'new-outline',
-    type: 'line',
-    source: 'outlines',
-    'source-layer': SL_OUTLINES,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': COLORS.newLine,
-      'line-width': ['interpolate',['linear'],['zoom'],4,0.6,8,1.2,12,2.2,14,3.0],
-      'line-opacity': 0.95
-    }
-  });
-
-  // New labels
+  // Labels from new_labels
   map.addLayer({
     id: 'new-labels',
     type: 'symbol',
@@ -165,14 +195,38 @@ map.on('load', () => {
     paint: { 'text-color': COLORS.label, 'text-halo-color': '#ffffff', 'text-halo-width': 1 }
   });
 
+  // Click popup - read both polygons at point
+  map.on('click', (e) => {
+    const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
+
+    const newFeats = map.queryRenderedFeatures(box, { layers: ['new-poly-fill'] })
+      .filter(f => f.properties.client_id === CLIENT_ID);
+    const oldFeats = map.queryRenderedFeatures(box, { layers: ['old-poly-fill'] })
+      .filter(f => f.properties.client_id === CLIENT_ID);
+    const changeFeats = map.queryRenderedFeatures(box, { layers: ['added-fill','removed-fill'] });
+
+    const newName = newFeats[0]?.properties?.region || 'None';
+    const oldName = oldFeats[0]?.properties?.region || 'None';
+    const changeAtPoint = changeFeats[0]?.properties?.change_type || 'unknown';
+
+    const html = `
+      <div style="font:12px system-ui;line-height:1.35">
+        <div><strong>New region</strong>: ${escapeHtml(newName)}</div>
+        <div><strong>Old region</strong>: ${escapeHtml(oldName)}</div>
+        <div><strong>Change here</strong>: ${escapeHtml(String(changeAtPoint))}</div>
+      </div>
+    `;
+    new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+  });
+
   // UI
   document.getElementById('apply').onclick = () => { CLIENT_ID = document.getElementById('cid').value.trim(); applyClientFilter(); };
-  document.getElementById('fit').onclick = () => fitToClientFromTiles();
-  document.getElementById('bounds').onclick = () => { map.showTileBoundaries = !map.showTileBoundaries; };
+  document.getElementById('fit').onclick   = () => fitToClientFromTiles();
+  document.getElementById('bounds').onclick= () => { map.showTileBoundaries = !map.showTileBoundaries; };
 
+  document.getElementById('chkNewPoly').onchange = (e) => setVis(['new-poly-fill','new-poly-outline'], e.target.checked);
+  document.getElementById('chkOldPoly').onchange = (e) => setVis(['old-poly-fill','old-poly-outline'], e.target.checked);
   document.getElementById('chkChanges').onchange = (e) => setVis(['added-fill','removed-fill'], e.target.checked);
-  document.getElementById('chkOutline').onchange = (e) => setVis(['new-outline'], e.target.checked);
-  document.getElementById('chkOld').onchange     = (e) => setVis(['old-outline'], e.target.checked);   // new
   document.getElementById('chkLabels').onchange  = (e) => setVis(['new-labels'], e.target.checked);
 
   setStatus(`SRS=${SRS}, scheme=${SCHEME}.`);
@@ -184,29 +238,40 @@ function applyClientFilter() {
   const fAdded   = ['all', f, ['==', ['get', 'change_type'], 'added']];
   const fRemoved = ['all', f, ['==', ['get', 'change_type'], 'removed']];
 
-  safeSetFilter('added-fill', fAdded);
-  safeSetFilter('removed-fill', fRemoved);
-  safeSetFilter('old-outline', f);   // new
-  safeSetFilter('new-outline', f);
-  safeSetFilter('new-labels', f);
+  safeSetFilter('new-poly-fill',   f);
+  safeSetFilter('new-poly-outline',f);
+  safeSetFilter('old-poly-fill',   f);
+  safeSetFilter('old-poly-outline',f);
+  safeSetFilter('added-fill',      fAdded);
+  safeSetFilter('removed-fill',    fRemoved);
+  safeSetFilter('new-labels',      f);
 
   setStatus(`Client set to ${CLIENT_ID}`);
 }
 
-// Fit to client from rendered tiles
+// Fit to client from rendered features
 async function fitToClientFromTiles() {
   applyClientFilter();
   await idle();
 
-  const layers = ['new-outline','old-outline','added-fill','removed-fill'];
+  const layers = ['new-poly-fill','old-poly-fill','added-fill','removed-fill'];
   let features = [];
   layers.forEach(id => {
     if (map.getLayer(id)) {
-      try { features = features.concat(map.queryRenderedFeatures({ layers: [id] })); } catch(e) {}
+      try { features = features.concat(map.queryRenderedFeatures({ layers: [id] })); } catch(_) {}
     }
   });
 
-  if (!features.length) { setStatus('No features found at current view. Zooming out.'); map.easeTo({ zoom: 3, duration: 0 }); await idle(); }
+  if (!features.length) {
+    setStatus('No features found at current view. Zooming out.');
+    map.easeTo({ zoom: 3, duration: 0 });
+    await idle();
+    layers.forEach(id => {
+      if (map.getLayer(id)) {
+        try { features = features.concat(map.queryRenderedFeatures({ layers: [id] })); } catch(_) {}
+      }
+    });
+  }
 
   if (!features.length) { setStatus('Could not compute bounds. Check client_id or data.'); return; }
 
@@ -217,6 +282,7 @@ async function fitToClientFromTiles() {
       if (x<minX) minX=x; if (y<minY) minY=y; if (x>maxX) maxX=x; if (y>maxY) maxY=y;
     });
   });
+
   if (isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY)) {
     map.fitBounds([[minX, minY],[maxX, maxY]], { padding: 30, duration: 0 });
     setStatus('Fit to client from tiles.');
@@ -225,6 +291,7 @@ async function fitToClientFromTiles() {
   }
 }
 
+// Helpers
 function extractCoords(arr, type, out=[]) {
   if (type === 'Point') return [arr];
   if (type === 'MultiPoint' || type === 'LineString') return arr;
@@ -235,12 +302,10 @@ function extractCoords(arr, type, out=[]) {
 }
 
 function safeSetFilter(id, filter) { if (map.getLayer(id)) map.setFilter(id, filter); }
-
 function setVis(ids, on) { ids.forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); }); }
-
 function idle() { return new Promise(res => map.once('idle', res)); }
-
 function setStatus(msg) { const el = document.getElementById('status'); if (el) el.textContent = msg; }
+function escapeHtml(str) { return String(str).replace(/[&<>"'`=\/]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','/':'&#x2F;','`':'&#x60;','=':'&#x3D;'}[s])); }
 </script>
 </body>
 </html>
