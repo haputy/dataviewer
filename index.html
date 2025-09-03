@@ -56,7 +56,7 @@
   <h3>Client Regions</h3>
   <div class="field">
     <label>Client ID</label>
-    <input id="cid" class="input" value="Green_Country_Tourism_OK"/>
+    <input id="cid" class="input" value="Visit_Milwaukee_WI"/>
   </div>
   <div class="row">
     <button id="apply" class="btn">Apply</button>
@@ -85,7 +85,7 @@ mapboxgl.accessToken = 'pk.eyJ1IjoiamF5a2luZ2hvcm4iLCJhIjoiY2tjY2gzNTBrMDQ5cTJ6b
 
 // Params for SRS/scheme if needed
 const params  = new URLSearchParams(location.search);
-const CLIENT_DEFAULT = params.get('client') || 'Green_Country_Tourism_OK';
+const CLIENT_DEFAULT = params.get('client') || 'Visit_Milwaukee_WI';
 const SRS    = params.get('srs')    || 'EPSG:900913';
 const SCHEME = params.get('scheme') || 'tms';
 
