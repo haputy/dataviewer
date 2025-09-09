@@ -2,20 +2,25 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Client Regions Change Viewer</title>
+  <title>Client Regions Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Mapbox GL JS -->
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet" />
+
+  <!-- Mapbox Search JS Web (Search Box API UI) -->
+  <script id="search-js" defer src="https://api.mapbox.com/search-js/v1.3.0/web.js"></script>
+
   <style>
     html,body,#map{height:100%;margin:0}
 
-    /* Material-like panel */
     .panel{
-      position:absolute;top:16px;left:16px;max-width:360px;
+      position:absolute;top:16px;left:16px;max-width:380px;z-index:1000;
       background:#fff;border-radius:12px;padding:14px 16px;
       box-shadow:0 4px 14px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12);
       font:13px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      color:#1f2937
+      color:#1f2937; overflow:visible
     }
     .panel h3{margin:0 0 8px 0;font-size:14px;font-weight:600;letter-spacing:.3px}
     .field{margin:10px 0 6px}
@@ -23,30 +28,27 @@
     .input{width:100%;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;outline:none}
     .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 
-    /* Buttons */
-    .btn{
-      appearance:none;border:0;border-radius:10px;padding:8px 12px;
-      background:#1976d2;color:#fff;font-weight:600;cursor:pointer;
-      box-shadow:0 2px 6px rgba(25,118,210,.35)
-    }
+    .btn{appearance:none;border:0;border-radius:10px;padding:8px 12px;background:#1976d2;color:#fff;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(25,118,210,.35)}
     .btn:hover{filter:brightness(1.05)}
     .btn.secondary{background:#e5e7eb;color:#111827;box-shadow:none}
+
     .switches{margin-top:8px}
     .switches label{display:block;margin:6px 0}
 
-    /* Legend chips */
     .legend{margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .swatch{width:14px;height:14px;display:inline-block;border:1px solid #999;vertical-align:middle;margin-right:4px;border-radius:4px}
 
     #status{margin-top:8px;color:#374151;font-size:12px}
 
-    /* Copy-to-clipboard button in popup */
-    .popup-copy-btn{
-    margin-left:8px;padding:2px 8px;border:1px solid #d1d5db;border-radius:8px;
-    background:#f3f4f6;cursor:pointer;font-size:11px
+    .popup-copy{
+      margin-left:8px;padding:2px 8px;border:1px solid #d1d5db;border-radius:8px;
+      background:#f3f4f6;cursor:pointer;font-size:11px
     }
-    .popup-copy-btn:hover{background:#e5e7eb}
+    .popup-copy:hover{background:#e5e7eb}
     .popup-copied{margin-left:6px;font-size:11px;color:#059669;display:none}
+
+    /* Search Box in panel */
+    #searchbox-wrap .mapbox-searchbox{width:100%}
   </style>
 </head>
 <body>
@@ -54,14 +56,19 @@
 
 <div class="panel">
   <h3>Client Regions</h3>
+
   <div class="field">
     <label>Client ID</label>
-    <input id="cid" class="input" value="Visit_Milwaukee_WI"/>
+    <input id="cid" class="input" value="Green_Country_Tourism_OK"/>
   </div>
+
   <div class="row">
     <button id="apply" class="btn">Apply</button>
     <button id="fit" class="btn">Fit to client</button>
-    <button id="bounds" class="btn secondary">Tile bounds</button>
+  </div>
+
+  <div id="searchbox-wrap" class="field">
+    <label>Search places of interest</label>
   </div>
 
   <div class="switches">
@@ -69,7 +76,7 @@
     <label><input type="checkbox" id="chkNewOutline" checked/> New regions (outline)</label>
     <label><input type="checkbox" id="chkOldOutline" checked/> Old regions (outline)</label>
     <label><input type="checkbox" id="chkTracts" /> Census tracts (outline)</label>
-    <label><input type="checkbox" id="chkLabels" checked/> New labels</label>
+    <label><input type="checkbox" id="chkFills" /> Boundary Polygon</label>
   </div>
 
   <div class="legend">
@@ -81,38 +88,57 @@
 </div>
 
 <script>
+// Use a public Mapbox token with Search Box capability enabled
 mapboxgl.accessToken = 'pk.eyJ1IjoiamF5a2luZ2hvcm4iLCJhIjoiY2tjY2gzNTBrMDQ5cTJ6bHI3MmU3OWRjdiJ9.M9_mnej57MG7QWyEhXks_Q';
 
-// Params for SRS/scheme if needed
 const params  = new URLSearchParams(location.search);
-const CLIENT_DEFAULT = params.get('client') || 'Visit_Milwaukee_WI';
+const CLIENT_DEFAULT = params.get('client') || 'Green_Country_Tourism_OK';
 const SRS    = params.get('srs')    || 'EPSG:900913';
 const SCHEME = params.get('scheme') || 'tms';
 
-// GeoServer TMS base
+// GeoServer tiles
 const TILE_HOST  = 'https://dev-geoserver.zartico.com/geoserver/gwc/service/tms/1.0.0';
-
-// workspace:layer and source-layer names
 const L_NEWREG   = 'codecsflip:regions_current';
 const SL_NEWREG  = 'regions_current';
 const L_OLDREG   = 'codecsflip:regions_legacy';
 const SL_OLDREG  = 'regions_legacy';
 const L_LABELS   = 'codecsflip:new_labels';
 const SL_LABELS  = 'new_labels';
-
-// Census tracts layer
 const L_TRACTS   = 'zartographer:census_tract_boundaries';
 const SL_TRACTS  = 'census_tract_boundaries';
-
 function tmsUrl(layer) { return `${TILE_HOST}/${layer}@${SRS}@pbf/{z}/{x}/{y}.pbf`; }
 
+// WFS for full tract geometry
+const WFS_BASE = 'https://dev-geoserver.zartico.com/geoserver/zartographer/ows';
+function wfsUrlByGeoid(geoid){
+  const u = new URL(WFS_BASE);
+  const qs = new URLSearchParams({
+    service: 'WFS',
+    version: '2.0.0',
+    request: 'GetFeature',
+    typeName: 'zartographer:census_tract_boundaries',
+    outputFormat: 'application/json',
+    srsName: 'EPSG:4326',
+    CQL_FILTER: `geoid='${geoid}'`
+  });
+  u.search = qs.toString();
+  return u.toString();
+}
+
+// Colors
 const COLORS = {
   newLine:    '#ff922b',
   oldLine:    '#4c6ef5',
   tractsLine: '#f4a3a3',
-  label:      '#1f2937'
+  newFill:    '#fde68a',
+  oldFill:    '#bfdbfe',
+  tractsFill: '#fecaca',
+  label:      '#1f2937',
+  selectFill: '#fde68a',
+  selectLine: '#f59e0b'
 };
 
+// Map
 let CLIENT_ID = CLIENT_DEFAULT;
 document.getElementById('cid').value = CLIENT_ID;
 
@@ -123,162 +149,223 @@ const map = new mapboxgl.Map({
   zoom: 4
 });
 
-map.on('error', e => { console.error('Mapbox GL error:', e && e.error || e); setStatus('Map error. See console.'); });
+// Search Box in panel
+(function mountSearchBox(){
+  const script = document.getElementById('search-js');
+  script.addEventListener('load', () => {
+    const sb = new mapboxsearch.MapboxSearchBox();
+    sb.accessToken = mapboxgl.accessToken;
+    sb.mapboxgl = mapboxgl;
+    sb.marker = true;
+    sb.bindMap(map);
+    sb.placeholder = 'museum, park, airport';
+    document.getElementById('searchbox-wrap').appendChild(sb);
+  });
+})();
+
+let tractAbort = null; // cancel in-flight WFS if user clicks quickly
 
 map.on('load', () => {
-  // sources
-  map.addSource('newRegions', { type: 'vector', tiles: [tmsUrl(L_NEWREG)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
-  map.addSource('oldRegions', { type: 'vector', tiles: [tmsUrl(L_OLDREG)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
-  map.addSource('labels',     { type: 'vector', tiles: [tmsUrl(L_LABELS)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
-  map.addSource('tracts',     { type: 'vector', tiles: [tmsUrl(L_TRACTS)],  scheme: SCHEME, minzoom: 0, maxzoom: 22 });
-
-  // Invisible hit-polygons for click/fit (kept visible with 0 opacity)
-  map.addLayer({
-    id: 'new-hit',
-    type: 'fill',
-    source: 'newRegions',
-    'source-layer': SL_NEWREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    paint: { 'fill-opacity': 0 }
-  });
-  map.addLayer({
-    id: 'old-hit',
-    type: 'fill',
-    source: 'oldRegions',
-    'source-layer': SL_OLDREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    paint: { 'fill-opacity': 0 }
-  });
-  // Tracts hit-layer (always on so we can get GEOID even if outline is hidden)
-  map.addLayer({
-    id: 'tracts-hit',
-    type: 'fill',
-    source: 'tracts',
-    'source-layer': SL_TRACTS,
-    paint: { 'fill-opacity': 0 }
+  // vector sources
+  map.addSource('newRegions', { type: 'vector', tiles: [tmsUrl(L_NEWREG)],  scheme: SCHEME });
+  map.addSource('oldRegions', { type: 'vector', tiles: [tmsUrl(L_OLDREG)],  scheme: SCHEME });
+  map.addSource('labels',     { type: 'vector', tiles: [tmsUrl(L_LABELS)],  scheme: SCHEME });
+  map.addSource('tracts', {
+    type: 'vector',
+    tiles: [tmsUrl(L_TRACTS)],
+    scheme: SCHEME,
+    promoteId: { [SL_TRACTS]: 'geoid' }
   });
 
-  // Region outlines
-  map.addLayer({
-    id: 'old-poly-outline',
-    type: 'line',
-    source: 'oldRegions',
-    'source-layer': SL_OLDREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': COLORS.oldLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,1.0,14,1.6], 'line-opacity': 0.95 }
+  // geojson source for full-geometry highlight from WFS
+  map.addSource('tract-highlight', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] }
   });
 
-  map.addLayer({
-    id: 'new-poly-outline',
-    type: 'line',
-    source: 'newRegions',
-    'source-layer': SL_NEWREG,
+  // invisible hit layers
+  map.addLayer({ id: 'new-hit', type: 'fill', source: 'newRegions', 'source-layer': SL_NEWREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID], paint: { 'fill-opacity': 0 } });
+  map.addLayer({ id: 'old-hit', type: 'fill', source: 'oldRegions', 'source-layer': SL_OLDREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID], paint: { 'fill-opacity': 0 } });
+  map.addLayer({ id: 'tracts-hit', type: 'fill', source: 'tracts', 'source-layer': SL_TRACTS,
+    paint: { 'fill-opacity': 0 } });
+
+  // subtle fills (off by default; toggled by "Boundary Polygon")
+  map.addLayer({ id: 'old-fill', type: 'fill', source: 'oldRegions', 'source-layer': SL_OLDREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID], layout: { 'visibility': 'none' },
+    paint: { 'fill-color': COLORS.oldFill, 'fill-opacity': 0.12 } });
+  map.addLayer({ id: 'new-fill', type: 'fill', source: 'newRegions', 'source-layer': SL_NEWREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID], layout: { 'visibility': 'none' },
+    paint: { 'fill-color': COLORS.newFill, 'fill-opacity': 0.14 } });
+  map.addLayer({ id: 'tracts-fill', type: 'fill', source: 'tracts', 'source-layer': SL_TRACTS,
+    layout: { 'visibility': 'none' }, paint: { 'fill-color': COLORS.tractsFill, 'fill-opacity': 0.10 } });
+
+  // outlines
+  map.addLayer({ id: 'old-poly-outline', type: 'line', source: 'oldRegions', 'source-layer': SL_OLDREG,
     filter: ['==', ['get', 'client_id'], CLIENT_ID],
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': COLORS.newLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.5,10,1.4,14,2.2], 'line-opacity': 0.95 }
-  });
+    paint: { 'line-color': COLORS.oldLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,1.0,14,1.6], 'line-opacity': 0.95 } });
 
-  // Census tracts outline (off by default)
-  map.addLayer({
-    id: 'tracts-outline',
-    type: 'line',
-    source: 'tracts',
-    'source-layer': SL_TRACTS,
+  map.addLayer({ id: 'new-poly-outline', type: 'line', source: 'newRegions', 'source-layer': SL_NEWREG,
+    filter: ['==', ['get', 'client_id'], CLIENT_ID],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': COLORS.newLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.5,10,1.4,14,2.2], 'line-opacity': 0.95 } });
+
+  // tracts outline off by default
+  map.addLayer({ id: 'tracts-outline', type: 'line', source: 'tracts', 'source-layer': SL_TRACTS,
     layout: { 'line-cap': 'round', 'line-join': 'round', 'visibility': 'none' },
-    paint: { 'line-color': COLORS.tractsLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,0.9,14,1.4], 'line-opacity': 0.9 }
-  });
+    paint: { 'line-color': COLORS.tractsLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,0.9,14,1.4], 'line-opacity': 0.9 } });
 
-  // Labels
-  map.addLayer({
-    id: 'new-labels',
-    type: 'symbol',
-    source: 'labels',
-    'source-layer': SL_LABELS,
+  // highlight from full GeoJSON
+  map.addLayer({ id: 'tracts-highlight-geo-fill', type: 'fill', source: 'tract-highlight',
+    layout: { 'visibility': 'none' }, paint: { 'fill-color': COLORS.selectFill, 'fill-opacity': 0.35 } });
+  map.addLayer({ id: 'tracts-highlight-geo-line', type: 'line', source: 'tract-highlight',
+    layout: { 'visibility': 'none' }, paint: { 'line-color': COLORS.selectLine, 'line-width': 2.5 } });
+
+  // optional quick local highlight from MVT while WFS loads
+  map.addLayer({ id: 'tracts-highlight-fill', type: 'fill', source: 'tracts', 'source-layer': SL_TRACTS,
+    layout: { 'visibility': 'none' }, paint: { 'fill-color': COLORS.selectFill, 'fill-opacity': 0.20 } });
+  map.addLayer({ id: 'tracts-highlight-line', type: 'line', source: 'tracts', 'source-layer': SL_TRACTS,
+    layout: { 'visibility': 'none' }, paint: { 'line-color': COLORS.selectLine, 'line-width': 1.5, 'line-opacity': 0.7 } });
+
+  // labels (always on)
+  map.addLayer({ id: 'new-labels', type: 'symbol', source: 'labels', 'source-layer': SL_LABELS,
     filter: ['==', ['get', 'client_id'], CLIENT_ID],
     layout: { 'text-field': ['get', 'region'], 'text-size': ['interpolate',['linear'],['zoom'],5,11,12,14], 'text-allow-overlap': false, 'text-padding': 2 },
-    paint: { 'text-color': COLORS.label, 'text-halo-color': '#ffffff', 'text-halo-width': 1 }
-  });
+    paint: { 'text-color': COLORS.label, 'text-halo-color': '#ffffff', 'text-halo-width': 1 } });
 
-  // Click popup: show New region, Old region, Tract GEOID
-  // Click popup: show New region, Old region, Tract GEOID with a copy button
-map.on('click', (e) => {
-  const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
-  const newFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] })
-                     .find(f => f.properties.client_id === CLIENT_ID);
-  const oldFeat = map.queryRenderedFeatures(box, { layers: ['old-hit'] })
-                     .find(f => f.properties.client_id === CLIENT_ID);
-  const tract   = map.queryRenderedFeatures(box, { layers: ['tracts-hit'] })[0];
+  // click handler: popup and full-geometry tract highlight; Copy GEOID only
+  map.on('click', async (e) => {
+    const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
+    const newFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
+    const oldFeat = map.queryRenderedFeatures(box, { layers: ['old-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
+    const tract   = map.queryRenderedFeatures(box, { layers: ['tracts-hit'] })[0];
 
-  const newName = newFeat?.properties?.region || 'None';
-  const oldName = oldFeat?.properties?.region || 'None';
-  const geoid   = tract?.properties?.geoid || '';
+    const newName = newFeat?.properties?.region || 'None';
+    const oldName = oldFeat?.properties?.region || 'None';
+    const geoid   = tract?.properties?.geoid || '';
 
-  const hasGEOID = geoid && geoid !== 'None';
+    if (geoid) {
+      const idStr = String(geoid);
+      map.setFilter('tracts-highlight-fill', ['==', ['to-string',['id']], idStr]);
+      map.setFilter('tracts-highlight-line', ['==', ['to-string',['id']], idStr]);
+      map.setLayoutProperty('tracts-highlight-fill','visibility','visible');
+      map.setLayoutProperty('tracts-highlight-line','visibility','visible');
+      await highlightFullTract(geoid);
+    } else {
+      clearTractHighlight();
+    }
 
-  const html = `
-    <div style="font:12px system-ui;line-height:1.35">
-      <div><strong>New region</strong>: ${escapeHtml(newName)}</div>
-      <div><strong>Old region</strong>: ${escapeHtml(oldName)}</div>
-      <div>
-        <strong>Tract GEOID</strong>: <span class="geoid-val">${escapeHtml(geoid || 'None')}</span>
-        ${hasGEOID ? `<button class="popup-copy-btn" data-geoid="${escapeHtml(geoid)}">Copy</button><span class="popup-copied">Copied</span>` : ``}
-      </div>
-    </div>`;
+    const html = `
+      <div style="font:12px system-ui;line-height:1.35">
+        <div><strong>New region</strong>: ${escapeHtml(newName)}</div>
+        <div><strong>Old region</strong>: ${escapeHtml(oldName)}</div>
+        <div>
+          <strong>Tract GEOID</strong>: <span class="geoid-val">${escapeHtml(geoid || 'None')}</span>
+          ${geoid ? `<button class="popup-copy" data-copy="${escapeHtml(geoid)}" title="Copy GEOID">Copy GEOID</button>` : ``}
+        </div>
+      </div>`;
 
-  const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+    const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
 
-  // Wire up the Copy button for this popup instance
-  const el = popup.getElement();
-  const btn = el.querySelector('.popup-copy-btn');
-  const ok  = el.querySelector('.popup-copied');
-
-  if (btn) {
-    btn.addEventListener('click', async (ev) => {
-      ev.stopPropagation();
-      const value = btn.getAttribute('data-geoid') || '';
-      if (!value) return;
-      try {
-        await navigator.clipboard.writeText(value);
-      } catch (_) {
-        // Fallback for older browsers
-        const ta = document.createElement('textarea');
-        ta.value = value; document.body.appendChild(ta);
-        ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-      }
-      if (ok) {
-        ok.style.display = 'inline';
-        setTimeout(() => { ok.style.display = 'none'; }, 1200);
-      }
+    // Copy GEOID handler
+    const el = popup.getElement();
+    el.querySelectorAll('.popup-copy').forEach(btn => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const value = btn.getAttribute('data-copy') || '';
+        if (!value) return;
+        try { await navigator.clipboard.writeText(value); }
+        catch (_) {
+          const ta = document.createElement('textarea');
+          ta.value = value; document.body.appendChild(ta);
+          ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        }
+        let tag = btn.nextElementSibling;
+        if (!tag || !tag.classList.contains('popup-copied')) {
+          tag = document.createElement('span');
+          tag.className = 'popup-copied';
+          tag.textContent = 'Copied';
+          btn.parentNode.insertBefore(tag, btn.nextSibling);
+        }
+        tag.style.display = 'inline';
+        setTimeout(() => { tag.style.display = 'none'; }, 1200);
+      });
     });
-  }
-});
+  });
 
   // UI wiring
   document.getElementById('apply').onclick = () => { CLIENT_ID = document.getElementById('cid').value.trim(); applyClientFilter(); };
   document.getElementById('fit').onclick   = () => fitToClientFromTiles();
-  document.getElementById('bounds').onclick= () => { map.showTileBoundaries = !map.showTileBoundaries; };
 
   document.getElementById('chkNewOutline').onchange = (e) => setVis('new-poly-outline', e.target.checked);
   document.getElementById('chkOldOutline').onchange = (e) => setVis('old-poly-outline', e.target.checked);
-  document.getElementById('chkTracts').onchange     = (e) => setVis('tracts-outline', e.target.checked);
-  document.getElementById('chkLabels').onchange     = (e) => setVis('new-labels', e.target.checked);
+  document.getElementById('chkTracts').onchange     = (e) => { setVis('tracts-outline', e.target.checked); updateFillsVisibility(); };
+  document.getElementById('chkFills').onchange      = () => updateFillsVisibility();
 
   setStatus(`SRS=${SRS}, scheme=${SCHEME}.`);
 });
 
-// Filters
+// fetch full tract geometry from WFS and display
+async function highlightFullTract(geoid){
+  try {
+    if (tractAbort) tractAbort.abort();
+    tractAbort = new AbortController();
+
+    setStatus(`Loading tract ${geoid} from WFS`);
+    const url = wfsUrlByGeoid(geoid);
+    const res = await fetch(url, { signal: tractAbort.signal });
+    if (!res.ok) {
+      setStatus(`WFS HTTP ${res.status}`);
+      return;
+    }
+    const gj = await res.json();
+
+    const src = map.getSource('tract-highlight');
+    if (src) src.setData(gj);
+
+    map.setLayoutProperty('tracts-highlight-geo-fill', 'visibility', 'visible');
+    map.setLayoutProperty('tracts-highlight-geo-line', 'visibility', 'visible');
+    map.setLayoutProperty('tracts-highlight-fill',     'visibility', 'none');
+    map.setLayoutProperty('tracts-highlight-line',     'visibility', 'none');
+
+    setStatus(`Loaded full tract ${geoid}`);
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    console.error('WFS error', err);
+    setStatus('WFS error. See console.');
+  }
+}
+
 function applyClientFilter() {
   const f = ['==', ['get', 'client_id'], CLIENT_ID];
   safeSetFilter('new-hit',          f);
   safeSetFilter('old-hit',          f);
+  safeSetFilter('new-fill',         f);
+  safeSetFilter('old-fill',         f);
   safeSetFilter('new-poly-outline', f);
   safeSetFilter('old-poly-outline', f);
   safeSetFilter('new-labels',       f);
   setStatus(`Client set to ${CLIENT_ID}`);
 }
 
-// Fit uses invisible hit layers
+function updateFillsVisibility() {
+  const fillsOn = document.getElementById('chkFills').checked;
+  const tractsOn = document.getElementById('chkTracts').checked;
+  setVis('new-fill', fillsOn);
+  setVis('old-fill', fillsOn);
+  setVis('tracts-fill', fillsOn && tractsOn);
+}
+
+function clearTractHighlight() {
+  ['tracts-highlight-geo-fill','tracts-highlight-geo-line','tracts-highlight-fill','tracts-highlight-line'].forEach(id=>{
+    if (map.getLayer(id)) map.setLayoutProperty(id,'visibility','none');
+  });
+  const src = map.getSource('tract-highlight');
+  if (src) src.setData({ type:'FeatureCollection', features:[] });
+}
+
 async function fitToClientFromTiles() {
   applyClientFilter();
   await idle();
@@ -288,14 +375,10 @@ async function fitToClientFromTiles() {
   if (!features.length) { setStatus('No features at view. Zooming out.'); map.easeTo({ zoom: 3, duration: 0 }); await idle(); }
   if (!features.length) { setStatus('Could not compute bounds. Check client_id or data.'); return; }
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-  features.forEach(f => {
-    const g = f.geometry;
-    extractCoords(g.coordinates, g.type).forEach(([x,y]) => { if (x<minX) minX=x; if (y<minY) minY=y; if (x>maxX) maxX=x; if (y>maxY) maxY=y; });
-  });
+  features.forEach(f => { const g = f.geometry; extractCoords(g.coordinates, g.type).forEach(([x,y]) => { if (x<minX) minX=x; if (y<minY) minY=y; if (x>maxX) maxX=x; if (y>maxY) maxY=y; }); });
   if (isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY)) map.fitBounds([[minX, minY],[maxX, maxY]], { padding: 30, duration: 0 });
 }
 
-// Helpers
 function extractCoords(arr, type, out=[]) {
   if (type === 'Point') return [arr];
   if (type === 'MultiPoint' || type === 'LineString') return arr;
