@@ -31,6 +31,7 @@
     .btn{appearance:none;border:0;border-radius:10px;padding:8px 12px;background:#1976d2;color:#fff;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(25,118,210,.35)}
     .btn:hover{filter:brightness(1.05)}
     .btn.secondary{background:#e5e7eb;color:#111827;box-shadow:none}
+    .btn.toggle.active{background:#0ea5e9;color:#fff}
 
     .switches{margin-top:8px}
     .switches label{display:block;margin:6px 0}
@@ -65,6 +66,7 @@
   <div class="row">
     <button id="apply" class="btn">Apply</button>
     <button id="fit" class="btn">Fit to client</button>
+    <button id="assignMode" class="btn toggle secondary" title="Select tract, then choose a new region">Tract Assignment Mode</button>
   </div>
 
   <div id="searchbox-wrap" class="field">
@@ -144,7 +146,7 @@ document.getElementById('cid').value = CLIENT_ID;
 
 const map = new mapboxgl.Map({
   container: 'map',
-  style: 'mapbox://styles/jaykinghorn/ck10yaqx8070o1dossjhhc0fb',
+  style: 'mapbox://styles/mapbox/light-v11',
   center: [-97, 38.5],
   zoom: 4
 });
@@ -158,12 +160,15 @@ const map = new mapboxgl.Map({
     sb.mapboxgl = mapboxgl;
     sb.marker = true;
     sb.bindMap(map);
-    sb.placeholder = 'museum, park, airport';
+    sb.placeholder = 'coffee, museum, trailhead';
     document.getElementById('searchbox-wrap').appendChild(sb);
   });
 })();
 
-let tractAbort = null; // cancel in-flight WFS if user clicks quickly
+// Assignment mode state
+let assignmentMode = false;
+let assignState = { stage: 'idle', geoid: null, oldRegion: null };
+let tractAbort = null; // cancel WFS if needed
 
 map.on('load', () => {
   // vector sources
@@ -191,7 +196,7 @@ map.on('load', () => {
   map.addLayer({ id: 'tracts-hit', type: 'fill', source: 'tracts', 'source-layer': SL_TRACTS,
     paint: { 'fill-opacity': 0 } });
 
-  // subtle fills (off by default; toggled by "Boundary Polygon")
+  // subtle fills (off by default)
   map.addLayer({ id: 'old-fill', type: 'fill', source: 'oldRegions', 'source-layer': SL_OLDREG,
     filter: ['==', ['get', 'client_id'], CLIENT_ID], layout: { 'visibility': 'none' },
     paint: { 'fill-color': COLORS.oldFill, 'fill-opacity': 0.12 } });
@@ -235,69 +240,21 @@ map.on('load', () => {
     layout: { 'text-field': ['get', 'region'], 'text-size': ['interpolate',['linear'],['zoom'],5,11,12,14], 'text-allow-overlap': false, 'text-padding': 2 },
     paint: { 'text-color': COLORS.label, 'text-halo-color': '#ffffff', 'text-halo-width': 1 } });
 
-  // click handler: popup and full-geometry tract highlight; Copy GEOID only
+  // Unified click handler
   map.on('click', async (e) => {
-    const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
-    const newFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
-    const oldFeat = map.queryRenderedFeatures(box, { layers: ['old-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
-    const tract   = map.queryRenderedFeatures(box, { layers: ['tracts-hit'] })[0];
-
-    const newName = newFeat?.properties?.region || 'None';
-    const oldName = oldFeat?.properties?.region || 'None';
-    const geoid   = tract?.properties?.geoid || '';
-
-    if (geoid) {
-      const idStr = String(geoid);
-      map.setFilter('tracts-highlight-fill', ['==', ['to-string',['id']], idStr]);
-      map.setFilter('tracts-highlight-line', ['==', ['to-string',['id']], idStr]);
-      map.setLayoutProperty('tracts-highlight-fill','visibility','visible');
-      map.setLayoutProperty('tracts-highlight-line','visibility','visible');
-      await highlightFullTract(geoid);
+    if (assignmentMode) {
+      await handleAssignClick(e);
     } else {
-      clearTractHighlight();
+      await handleNormalClick(e);
     }
-
-    const html = `
-      <div style="font:12px system-ui;line-height:1.35">
-        <div><strong>New region</strong>: ${escapeHtml(newName)}</div>
-        <div><strong>Old region</strong>: ${escapeHtml(oldName)}</div>
-        <div>
-          <strong>Tract GEOID</strong>: <span class="geoid-val">${escapeHtml(geoid || 'None')}</span>
-          ${geoid ? `<button class="popup-copy" data-copy="${escapeHtml(geoid)}" title="Copy GEOID">Copy GEOID</button>` : ``}
-        </div>
-      </div>`;
-
-    const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
-
-    // Copy GEOID handler
-    const el = popup.getElement();
-    el.querySelectorAll('.popup-copy').forEach(btn => {
-      btn.addEventListener('click', async (ev) => {
-        ev.stopPropagation();
-        const value = btn.getAttribute('data-copy') || '';
-        if (!value) return;
-        try { await navigator.clipboard.writeText(value); }
-        catch (_) {
-          const ta = document.createElement('textarea');
-          ta.value = value; document.body.appendChild(ta);
-          ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-        }
-        let tag = btn.nextElementSibling;
-        if (!tag || !tag.classList.contains('popup-copied')) {
-          tag = document.createElement('span');
-          tag.className = 'popup-copied';
-          tag.textContent = 'Copied';
-          btn.parentNode.insertBefore(tag, btn.nextSibling);
-        }
-        tag.style.display = 'inline';
-        setTimeout(() => { tag.style.display = 'none'; }, 1200);
-      });
-    });
   });
 
   // UI wiring
   document.getElementById('apply').onclick = () => { CLIENT_ID = document.getElementById('cid').value.trim(); applyClientFilter(); };
   document.getElementById('fit').onclick   = () => fitToClientFromTiles();
+
+  const assignBtn = document.getElementById('assignMode');
+  assignBtn.onclick = () => setAssignMode(!assignmentMode);
 
   document.getElementById('chkNewOutline').onchange = (e) => setVis('new-poly-outline', e.target.checked);
   document.getElementById('chkOldOutline').onchange = (e) => setVis('old-poly-outline', e.target.checked);
@@ -306,6 +263,129 @@ map.on('load', () => {
 
   setStatus(`SRS=${SRS}, scheme=${SCHEME}.`);
 });
+
+// Normal click behavior
+async function handleNormalClick(e){
+  const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
+  const newFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
+  const oldFeat = map.queryRenderedFeatures(box, { layers: ['old-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
+  const tract   = map.queryRenderedFeatures(box, { layers: ['tracts-hit'] })[0];
+
+  const newName = newFeat?.properties?.region || 'None';
+  const oldName = oldFeat?.properties?.region || 'None';
+  const geoid   = tract?.properties?.geoid || '';
+
+  if (geoid) {
+    const idStr = String(geoid);
+    map.setFilter('tracts-highlight-fill', ['==', ['to-string',['id']], idStr]);
+    map.setFilter('tracts-highlight-line', ['==', ['to-string',['id']], idStr]);
+    map.setLayoutProperty('tracts-highlight-fill','visibility','visible');
+    map.setLayoutProperty('tracts-highlight-line','visibility','visible');
+    await highlightFullTract(geoid);
+  } else {
+    clearTractHighlight();
+  }
+
+  const html = `
+    <div style="font:12px system-ui;line-height:1.35">
+      <div><strong>New region</strong>: ${escapeHtml(newName)}</div>
+      <div><strong>Old region</strong>: ${escapeHtml(oldName)}</div>
+      <div>
+        <strong>Tract GEOID</strong>: <span class="geoid-val">${escapeHtml(geoid || 'None')}</span>
+        ${geoid ? `<button class="popup-copy" data-copy="${escapeHtml(geoid)}" title="Copy GEOID">Copy GEOID</button>` : ``}
+      </div>
+    </div>`;
+
+  const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+
+  // Copy GEOID handler
+  const el = popup.getElement();
+  el.querySelectorAll('.popup-copy').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const value = btn.getAttribute('data-copy') || '';
+      if (!value) return;
+      await copyToClipboard(value);
+      flashCopied(btn);
+    });
+  });
+}
+
+// Assignment mode click behavior
+async function handleAssignClick(e){
+  const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
+
+  // Stage A: pick tract and current region
+  if (assignState.stage === 'idle' || assignState.stage === 'awaitTract') {
+    const tract = map.queryRenderedFeatures(box, { layers: ['tracts-hit'] })[0];
+    const newFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
+
+    const geoid = tract?.properties?.geoid || '';
+    const curRegion = newFeat?.properties?.region || '';
+
+    if (!geoid || !curRegion) {
+      setStatus('Click inside a tract and within a current region.');
+      return;
+    }
+
+    // highlight that tract right away
+    const idStr = String(geoid);
+    map.setFilter('tracts-highlight-fill', ['==', ['to-string',['id']], idStr]);
+    map.setFilter('tracts-highlight-line', ['==', ['to-string',['id']], idStr]);
+    map.setLayoutProperty('tracts-highlight-fill','visibility','visible');
+    map.setLayoutProperty('tracts-highlight-line','visibility','visible');
+    highlightFullTract(geoid).catch(()=>{});
+
+    assignState = { stage: 'pickedTract', geoid, oldRegion: curRegion };
+
+    const html = `
+      <div style="font:12px system-ui;line-height:1.35">
+        <div><strong>Tract GEOID</strong>: ${escapeHtml(geoid)}</div>
+        <div><strong>Current region</strong>: ${escapeHtml(curRegion)}</div>
+        <div style="margin-top:6px">
+          <button class="popup-copy" id="startReassign">Reassign to another region</button>
+        </div>
+      </div>`;
+
+    const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+    const el = popup.getElement();
+    const btn = el.querySelector('#startReassign');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        assignState.stage = 'awaitNewRegion';
+        popup.remove();
+        setStatus('Assignment: click the new region to reassign the selected tract.');
+      });
+    }
+    return;
+  }
+
+  // Stage B: click a new region to assign to
+  if (assignState.stage === 'awaitNewRegion') {
+    const regionFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
+    const newRegion = regionFeat?.properties?.region || '';
+
+    if (!newRegion) {
+      setStatus('Not a valid region. Click inside a region to complete the reassignment.');
+      return;
+    }
+
+    const line = `${assignState.geoid}\t${assignState.oldRegion}\t${newRegion}`;
+    await copyToClipboard(line);
+
+    // small confirmation popup
+    new mapboxgl.Popup({ closeButton: true, closeOnClick: true })
+      .setLngLat(e.lngLat)
+      .setHTML(`<div style="font:12px system-ui">Copied:<br>${escapeHtml(line)}</div>`)
+      .addTo(map);
+
+    setStatus(`Copied assignment: ${assignState.geoid} | ${assignState.oldRegion} -> ${newRegion}`);
+
+    // reset for next assignment, keep mode on
+    assignState = { stage: 'awaitTract', geoid: null, oldRegion: null };
+    return;
+  }
+}
 
 // fetch full tract geometry from WFS and display
 async function highlightFullTract(geoid){
@@ -336,6 +416,17 @@ async function highlightFullTract(geoid){
     console.error('WFS error', err);
     setStatus('WFS error. See console.');
   }
+}
+
+// UI helpers
+function setAssignMode(on){
+  assignmentMode = on;
+  const btn = document.getElementById('assignMode');
+  btn.classList.toggle('active', assignmentMode);
+  btn.classList.toggle('secondary', !assignmentMode);
+  btn.textContent = assignmentMode ? 'Tract Assignment Mode (ON)' : 'Tract Assignment Mode';
+  assignState = { stage: assignmentMode ? 'awaitTract' : 'idle', geoid: null, oldRegion: null };
+  setStatus(assignmentMode ? 'Assignment mode: click a tract to begin.' : 'Assignment mode off.');
 }
 
 function applyClientFilter() {
@@ -379,6 +470,7 @@ async function fitToClientFromTiles() {
   if (isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY)) map.fitBounds([[minX, minY],[maxX, maxY]], { padding: 30, duration: 0 });
 }
 
+// utilities
 function extractCoords(arr, type, out=[]) {
   if (type === 'Point') return [arr];
   if (type === 'MultiPoint' || type === 'LineString') return arr;
@@ -392,6 +484,25 @@ function setVis(id, on) { if (map.getLayer(id)) map.setLayoutProperty(id, 'visib
 function idle() { return new Promise(res => map.once('idle', res)); }
 function setStatus(msg) { const el = document.getElementById('status'); if (el) el.textContent = msg; }
 function escapeHtml(str) { return String(str).replace(/[&<>"'`=\/]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','/':'&#x2F;','`':'&#x60;','=':'&#x3D;'}[s])); }
+async function copyToClipboard(value){
+  try { await navigator.clipboard.writeText(value); }
+  catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = value; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+  }
+}
+function flashCopied(btn){
+  let tag = btn.nextElementSibling;
+  if (!tag || !tag.classList.contains('popup-copied')) {
+    tag = document.createElement('span');
+    tag.className = 'popup-copied';
+    tag.textContent = 'Copied';
+    btn.parentNode.insertBefore(tag, btn.nextSibling);
+  }
+  tag.style.display = 'inline';
+  setTimeout(() => { tag.style.display = 'none'; }, 1200);
+}
 </script>
 </body>
 </html>
