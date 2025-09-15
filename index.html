@@ -9,14 +9,14 @@
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet" />
 
-  <!-- Mapbox Search JS Web (Search Box API UI) -->
+  <!-- Mapbox Search JS Web (Search Box API UI for POIs) -->
   <script id="search-js" defer src="https://api.mapbox.com/search-js/v1.3.0/web.js"></script>
 
   <style>
     html,body,#map{height:100%;margin:0}
 
     .panel{
-      position:absolute;top:16px;left:16px;max-width:380px;z-index:1000;
+      position:absolute;top:16px;left:16px;max-width:400px;z-index:1000;
       background:#fff;border-radius:12px;padding:14px 16px;
       box-shadow:0 4px 14px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12);
       font:13px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -25,7 +25,7 @@
     .panel h3{margin:0 0 8px 0;font-size:14px;font-weight:600;letter-spacing:.3px}
     .field{margin:10px 0 6px}
     .field label{display:block;font-size:11px;color:#6b7280;margin-bottom:4px}
-    .input{width:100%;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;outline:none}
+    .input, select.input{width:100%;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;outline:none;background:#fff}
     .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 
     .btn{appearance:none;border:0;border-radius:10px;padding:8px 12px;background:#1976d2;color:#fff;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(25,118,210,.35)}
@@ -48,7 +48,6 @@
     .popup-copy:hover{background:#e5e7eb}
     .popup-copied{margin-left:6px;font-size:11px;color:#059669;display:none}
 
-    /* Search Box in panel */
     #searchbox-wrap .mapbox-searchbox{width:100%}
   </style>
 </head>
@@ -59,14 +58,17 @@
   <h3>Client Regions</h3>
 
   <div class="field">
-    <label>Client ID</label>
-    <input id="cid" class="input" value="Green_Country_Tourism_OK"/>
+    <label>Client</label>
+    <select id="cidSel" class="input">
+      <option>Loading…</option>
+    </select>
   </div>
 
   <div class="row">
     <button id="apply" class="btn">Apply</button>
     <button id="fit" class="btn">Fit to client</button>
     <button id="assignMode" class="btn toggle secondary" title="Select tract, then choose a new region">Tract Assignment Mode</button>
+    <button id="basemap" class="btn secondary" title="Toggle basemap">Basemap: Light</button>
   </div>
 
   <div id="searchbox-wrap" class="field">
@@ -93,10 +95,15 @@
 // Use a public Mapbox token with Search Box capability enabled
 mapboxgl.accessToken = 'pk.eyJ1IjoiamF5a2luZ2hvcm4iLCJhIjoiY2tjY2gzNTBrMDQ5cTJ6bHI3MmU3OWRjdiJ9.M9_mnej57MG7QWyEhXks_Q';
 
+// Params
 const params  = new URLSearchParams(location.search);
-const CLIENT_DEFAULT = params.get('client') || 'Green_Country_Tourism_OK';
 const SRS    = params.get('srs')    || 'EPSG:900913';
 const SCHEME = params.get('scheme') || 'tms';
+
+// Basemap styles
+const LIGHT_STYLE = 'mapbox://styles/mapbox/light-v11';
+const SAT_STYLE   = 'mapbox://styles/mapbox/satellite-streets-v12';
+let currentBase   = LIGHT_STYLE;
 
 // GeoServer tiles
 const TILE_HOST  = 'https://dev-geoserver.zartico.com/geoserver/gwc/service/tms/1.0.0';
@@ -127,6 +134,22 @@ function wfsUrlByGeoid(geoid){
   return u.toString();
 }
 
+// WFS for client ids list (expects layer codecsflip:client_ids with property client_id)
+const CLIENT_IDS_OWS = 'https://dev-geoserver.zartico.com/geoserver/regions_app/ows';
+function clientIdsUrl(){
+  const u = new URL(CLIENT_IDS_OWS);
+  const qs = new URLSearchParams({
+    service: 'WFS',
+    version: '2.0.0',
+    request: 'GetFeature',
+    typeName: 'regions_app:client_ids',
+    outputFormat: 'application/json',
+    propertyName: 'client_id'
+  });
+  u.search = qs.toString();
+  return u.toString();
+}
+
 // Colors
 const COLORS = {
   newLine:    '#ff922b',
@@ -140,13 +163,16 @@ const COLORS = {
   selectLine: '#f59e0b'
 };
 
-// Map
-let CLIENT_ID = CLIENT_DEFAULT;
-document.getElementById('cid').value = CLIENT_ID;
+// State
+let CLIENT_ID = null;                // set after loading dropdown
+let tractAbort = null;               // abort WFS fetch
+let assignmentMode = false;
+let assignState = { stage: 'idle', geoid: null, oldRegion: null };
 
+// Map
 const map = new mapboxgl.Map({
   container: 'map',
-  style: 'mapbox://styles/mapbox/light-v11',
+  style: LIGHT_STYLE,
   center: [-97, 38.5],
   zoom: 4
 });
@@ -165,103 +191,132 @@ const map = new mapboxgl.Map({
   });
 })();
 
-// Assignment mode state
-let assignmentMode = false;
-let assignState = { stage: 'idle', geoid: null, oldRegion: null };
-let tractAbort = null; // cancel WFS if needed
+// Build all operational sources and layers.
+// Call on initial load and again after map.setStyle via 'style.load'.
+function buildOperationalLayers(){
+  // sources
+  if (!map.getSource('newRegions')) map.addSource('newRegions', { type: 'vector', tiles: [tmsUrl(L_NEWREG)],  scheme: SCHEME });
+  if (!map.getSource('oldRegions')) map.addSource('oldRegions', { type: 'vector', tiles: [tmsUrl(L_OLDREG)],  scheme: SCHEME });
+  if (!map.getSource('labels'))     map.addSource('labels',     { type: 'vector', tiles: [tmsUrl(L_LABELS)],  scheme: SCHEME });
+  if (!map.getSource('tracts'))     map.addSource('tracts',     { type: 'vector', tiles: [tmsUrl(L_TRACTS)],  scheme: SCHEME, promoteId: { [SL_TRACTS]: 'geoid' } });
 
-map.on('load', () => {
-  // vector sources
-  map.addSource('newRegions', { type: 'vector', tiles: [tmsUrl(L_NEWREG)],  scheme: SCHEME });
-  map.addSource('oldRegions', { type: 'vector', tiles: [tmsUrl(L_OLDREG)],  scheme: SCHEME });
-  map.addSource('labels',     { type: 'vector', tiles: [tmsUrl(L_LABELS)],  scheme: SCHEME });
-  map.addSource('tracts', {
-    type: 'vector',
-    tiles: [tmsUrl(L_TRACTS)],
-    scheme: SCHEME,
-    promoteId: { [SL_TRACTS]: 'geoid' }
-  });
+  if (!map.getSource('tract-highlight')) {
+    map.addSource('tract-highlight', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  }
 
-  // geojson source for full-geometry highlight from WFS
-  map.addSource('tract-highlight', {
-    type: 'geojson',
-    data: { type: 'FeatureCollection', features: [] }
-  });
+  // helper to add layer if missing
+  function addLayerIfMissing(def, beforeId){
+    if (!map.getLayer(def.id)) {
+      map.addLayer(def, beforeId);
+    }
+  }
 
   // invisible hit layers
-  map.addLayer({ id: 'new-hit', type: 'fill', source: 'newRegions', 'source-layer': SL_NEWREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID], paint: { 'fill-opacity': 0 } });
-  map.addLayer({ id: 'old-hit', type: 'fill', source: 'oldRegions', 'source-layer': SL_OLDREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID], paint: { 'fill-opacity': 0 } });
-  map.addLayer({ id: 'tracts-hit', type: 'fill', source: 'tracts', 'source-layer': SL_TRACTS,
-    paint: { 'fill-opacity': 0 } });
+  addLayerIfMissing({ id:'new-hit', type:'fill', source:'newRegions', 'source-layer':SL_NEWREG,
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''], paint:{'fill-opacity':0} });
+  addLayerIfMissing({ id:'old-hit', type:'fill', source:'oldRegions', 'source-layer':SL_OLDREG,
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''], paint:{'fill-opacity':0} });
+  addLayerIfMissing({ id:'tracts-hit', type:'fill', source:'tracts', 'source-layer':SL_TRACTS,
+    paint:{'fill-opacity':0} });
 
   // subtle fills (off by default)
-  map.addLayer({ id: 'old-fill', type: 'fill', source: 'oldRegions', 'source-layer': SL_OLDREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID], layout: { 'visibility': 'none' },
-    paint: { 'fill-color': COLORS.oldFill, 'fill-opacity': 0.12 } });
-  map.addLayer({ id: 'new-fill', type: 'fill', source: 'newRegions', 'source-layer': SL_NEWREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID], layout: { 'visibility': 'none' },
-    paint: { 'fill-color': COLORS.newFill, 'fill-opacity': 0.14 } });
-  map.addLayer({ id: 'tracts-fill', type: 'fill', source: 'tracts', 'source-layer': SL_TRACTS,
-    layout: { 'visibility': 'none' }, paint: { 'fill-color': COLORS.tractsFill, 'fill-opacity': 0.10 } });
+  addLayerIfMissing({ id:'old-fill', type:'fill', source:'oldRegions', 'source-layer':SL_OLDREG,
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
+    layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.oldFill, 'fill-opacity': 0.12 } });
+
+  addLayerIfMissing({ id:'new-fill', type:'fill', source:'newRegions', 'source-layer':SL_NEWREG,
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
+    layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.newFill, 'fill-opacity': 0.14 } });
+
+  addLayerIfMissing({ id:'tracts-fill', type:'fill', source:'tracts', 'source-layer':SL_TRACTS,
+    layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.tractsFill, 'fill-opacity': 0.10 } });
 
   // outlines
-  map.addLayer({ id: 'old-poly-outline', type: 'line', source: 'oldRegions', 'source-layer': SL_OLDREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': COLORS.oldLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,1.0,14,1.6], 'line-opacity': 0.95 } });
+  addLayerIfMissing({ id:'old-poly-outline', type:'line', source:'oldRegions', 'source-layer':SL_OLDREG,
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
+    layout:{ 'line-cap':'round', 'line-join':'round' },
+    paint:{ 'line-color': COLORS.oldLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,1.0,14,1.6], 'line-opacity': 0.95 } });
 
-  map.addLayer({ id: 'new-poly-outline', type: 'line', source: 'newRegions', 'source-layer': SL_NEWREG,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': COLORS.newLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.5,10,1.4,14,2.2], 'line-opacity': 0.95 } });
+  addLayerIfMissing({ id:'new-poly-outline', type:'line', source:'newRegions', 'source-layer':SL_NEWREG,
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
+    layout:{ 'line-cap':'round', 'line-join':'round' },
+    paint:{ 'line-color': COLORS.newLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.5,10,1.4,14,2.2], 'line-opacity': 0.95 } });
 
   // tracts outline off by default
-  map.addLayer({ id: 'tracts-outline', type: 'line', source: 'tracts', 'source-layer': SL_TRACTS,
-    layout: { 'line-cap': 'round', 'line-join': 'round', 'visibility': 'none' },
-    paint: { 'line-color': COLORS.tractsLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,0.9,14,1.4], 'line-opacity': 0.9 } });
+  addLayerIfMissing({ id:'tracts-outline', type:'line', source:'tracts', 'source-layer':SL_TRACTS,
+    layout:{ 'line-cap':'round', 'line-join':'round', 'visibility':'none' },
+    paint:{ 'line-color': COLORS.tractsLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,0.9,14,1.4], 'line-opacity': 0.9 } });
 
-  // highlight from full GeoJSON
-  map.addLayer({ id: 'tracts-highlight-geo-fill', type: 'fill', source: 'tract-highlight',
-    layout: { 'visibility': 'none' }, paint: { 'fill-color': COLORS.selectFill, 'fill-opacity': 0.35 } });
-  map.addLayer({ id: 'tracts-highlight-geo-line', type: 'line', source: 'tract-highlight',
-    layout: { 'visibility': 'none' }, paint: { 'line-color': COLORS.selectLine, 'line-width': 2.5 } });
+  // highlight layers
+  addLayerIfMissing({ id:'tracts-highlight-geo-fill', type:'fill', source:'tract-highlight',
+    layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.selectFill, 'fill-opacity': 0.35 } });
+  addLayerIfMissing({ id:'tracts-highlight-geo-line', type:'line', source:'tract-highlight',
+    layout:{ visibility: 'none' }, paint:{ 'line-color': COLORS.selectLine, 'line-width': 2.5 } });
 
-  // optional quick local highlight from MVT while WFS loads
-  map.addLayer({ id: 'tracts-highlight-fill', type: 'fill', source: 'tracts', 'source-layer': SL_TRACTS,
-    layout: { 'visibility': 'none' }, paint: { 'fill-color': COLORS.selectFill, 'fill-opacity': 0.20 } });
-  map.addLayer({ id: 'tracts-highlight-line', type: 'line', source: 'tracts', 'source-layer': SL_TRACTS,
-    layout: { 'visibility': 'none' }, paint: { 'line-color': COLORS.selectLine, 'line-width': 1.5, 'line-opacity': 0.7 } });
+  addLayerIfMissing({ id:'tracts-highlight-fill', type:'fill', source:'tracts', 'source-layer':SL_TRACTS,
+    layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.selectFill, 'fill-opacity': 0.20 } });
+  addLayerIfMissing({ id:'tracts-highlight-line', type:'line', source:'tracts', 'source-layer':SL_TRACTS,
+    layout:{ visibility: 'none' }, paint:{ 'line-color': COLORS.selectLine, 'line-width': 1.5, 'line-opacity': 0.7 } });
 
   // labels (always on)
-  map.addLayer({ id: 'new-labels', type: 'symbol', source: 'labels', 'source-layer': SL_LABELS,
-    filter: ['==', ['get', 'client_id'], CLIENT_ID],
-    layout: { 'text-field': ['get', 'region'], 'text-size': ['interpolate',['linear'],['zoom'],5,11,12,14], 'text-allow-overlap': false, 'text-padding': 2 },
-    paint: { 'text-color': COLORS.label, 'text-halo-color': '#ffffff', 'text-halo-width': 1 } });
+  addLayerIfMissing({ id:'new-labels', type:'symbol', source:'labels', 'source-layer':SL_LABELS,
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
+    layout:{ 'text-field':['get','region'], 'text-size':['interpolate',['linear'],['zoom'],5,11,12,14], 'text-allow-overlap': false, 'text-padding': 2 },
+    paint:{ 'text-color': COLORS.label, 'text-halo-color': '#ffffff', 'text-halo-width': 1 } });
 
-  // Unified click handler
-  map.on('click', async (e) => {
-    if (assignmentMode) {
-      await handleAssignClick(e);
-    } else {
-      await handleNormalClick(e);
-    }
-  });
+  // restore visibility from checkboxes
+  restoreVisibilityFromUI();
+}
 
-  // UI wiring
-  document.getElementById('apply').onclick = () => { CLIENT_ID = document.getElementById('cid').value.trim(); applyClientFilter(); };
-  document.getElementById('fit').onclick   = () => fitToClientFromTiles();
+// Initial load
+map.on('load', buildOperationalLayers);
 
-  const assignBtn = document.getElementById('assignMode');
-  assignBtn.onclick = () => setAssignMode(!assignmentMode);
+// Rebuild layers after basemap change
+map.on('style.load', () => {
+  // style changed by setStyle
+  buildOperationalLayers();
+});
 
-  document.getElementById('chkNewOutline').onchange = (e) => setVis('new-poly-outline', e.target.checked);
-  document.getElementById('chkOldOutline').onchange = (e) => setVis('old-poly-outline', e.target.checked);
-  document.getElementById('chkTracts').onchange     = (e) => { setVis('tracts-outline', e.target.checked); updateFillsVisibility(); };
-  document.getElementById('chkFills').onchange      = () => updateFillsVisibility();
+// One unified click handler
+map.on('click', async (e) => {
+  if (assignmentMode) {
+    await handleAssignClick(e);
+  } else {
+    await handleNormalClick(e);
+  }
+});
 
-  setStatus(`SRS=${SRS}, scheme=${SCHEME}.`);
+// UI wiring
+document.getElementById('apply').onclick = () => { CLIENT_ID = getSelectedClient(); applyClientFilter(); };
+document.getElementById('fit').onclick   = () => fitToClientFromTiles();
+
+document.getElementById('assignMode').onclick = () => setAssignMode(!assignmentMode);
+
+document.getElementById('basemap').onclick = () => {
+  currentBase = currentBase === LIGHT_STYLE ? SAT_STYLE : LIGHT_STYLE;
+  map.setStyle(currentBase);
+  document.getElementById('basemap').textContent = `Basemap: ${currentBase === LIGHT_STYLE ? 'Light' : 'Satellite'}`;
+  setStatus(`Basemap set to ${currentBase === LIGHT_STYLE ? 'Light' : 'Satellite'}`);
+};
+
+document.getElementById('chkNewOutline').onchange = (e) => setVis('new-poly-outline', e.target.checked);
+document.getElementById('chkOldOutline').onchange = (e) => setVis('old-poly-outline', e.target.checked);
+document.getElementById('chkTracts').onchange     = (e) => { setVis('tracts-outline', e.target.checked); updateFillsVisibility(); };
+document.getElementById('chkFills').onchange      = () => updateFillsVisibility();
+
+// Load client ids into dropdown and set initial CLIENT_ID
+loadClientIds().then(() => {
+  CLIENT_ID = getSelectedClient();
+  applyClientFilter();
+  setStatus('Client list loaded.');
+}).catch(err => {
+  console.error('Client IDs load failed', err);
+  // Fallback: if query param ?client= is provided, use it; else keep null
+  const fallback = params.get('client') || 'Green_Country_Tourism_OK';
+  ensureClientInDropdown(fallback);
+  CLIENT_ID = fallback;
+  applyClientFilter();
+  setStatus('Client list fallback applied.');
 });
 
 // Normal click behavior
@@ -277,10 +332,12 @@ async function handleNormalClick(e){
 
   if (geoid) {
     const idStr = String(geoid);
-    map.setFilter('tracts-highlight-fill', ['==', ['to-string',['id']], idStr]);
-    map.setFilter('tracts-highlight-line', ['==', ['to-string',['id']], idStr]);
-    map.setLayoutProperty('tracts-highlight-fill','visibility','visible');
-    map.setLayoutProperty('tracts-highlight-line','visibility','visible');
+    if (map.getLayer('tracts-highlight-fill')) {
+      map.setFilter('tracts-highlight-fill', ['==', ['to-string',['id']], idStr]);
+      map.setFilter('tracts-highlight-line', ['==', ['to-string',['id']], idStr]);
+      map.setLayoutProperty('tracts-highlight-fill','visibility','visible');
+      map.setLayoutProperty('tracts-highlight-line','visibility','visible');
+    }
     await highlightFullTract(geoid);
   } else {
     clearTractHighlight();
@@ -295,10 +352,8 @@ async function handleNormalClick(e){
         ${geoid ? `<button class="popup-copy" data-copy="${escapeHtml(geoid)}" title="Copy GEOID">Copy GEOID</button>` : ``}
       </div>
     </div>`;
-
   const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
 
-  // Copy GEOID handler
   const el = popup.getElement();
   el.querySelectorAll('.popup-copy').forEach(btn => {
     btn.addEventListener('click', async (ev) => {
@@ -315,7 +370,6 @@ async function handleNormalClick(e){
 async function handleAssignClick(e){
   const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
 
-  // Stage A: pick tract and current region
   if (assignState.stage === 'idle' || assignState.stage === 'awaitTract') {
     const tract = map.queryRenderedFeatures(box, { layers: ['tracts-hit'] })[0];
     const newFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
@@ -323,17 +377,16 @@ async function handleAssignClick(e){
     const geoid = tract?.properties?.geoid || '';
     const curRegion = newFeat?.properties?.region || '';
 
-    if (!geoid || !curRegion) {
-      setStatus('Click inside a tract and within a current region.');
-      return;
-    }
+    if (!geoid || !curRegion) { setStatus('Click inside a tract and within a current region.'); return; }
 
-    // highlight that tract right away
+    // quick highlight then full
     const idStr = String(geoid);
-    map.setFilter('tracts-highlight-fill', ['==', ['to-string',['id']], idStr]);
-    map.setFilter('tracts-highlight-line', ['==', ['to-string',['id']], idStr]);
-    map.setLayoutProperty('tracts-highlight-fill','visibility','visible');
-    map.setLayoutProperty('tracts-highlight-line','visibility','visible');
+    if (map.getLayer('tracts-highlight-fill')) {
+      map.setFilter('tracts-highlight-fill', ['==', ['to-string',['id']], idStr]);
+      map.setFilter('tracts-highlight-line', ['==', ['to-string',['id']], idStr]);
+      map.setLayoutProperty('tracts-highlight-fill','visibility','visible');
+      map.setLayoutProperty('tracts-highlight-line','visibility','visible');
+    }
     highlightFullTract(geoid).catch(()=>{});
 
     assignState = { stage: 'pickedTract', geoid, oldRegion: curRegion };
@@ -342,11 +395,8 @@ async function handleAssignClick(e){
       <div style="font:12px system-ui;line-height:1.35">
         <div><strong>Tract GEOID</strong>: ${escapeHtml(geoid)}</div>
         <div><strong>Current region</strong>: ${escapeHtml(curRegion)}</div>
-        <div style="margin-top:6px">
-          <button class="popup-copy" id="startReassign">Reassign to another region</button>
-        </div>
+        <div style="margin-top:6px"><button class="popup-copy" id="startReassign">Reassign to another region</button></div>
       </div>`;
-
     const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
     const el = popup.getElement();
     const btn = el.querySelector('#startReassign');
@@ -360,34 +410,25 @@ async function handleAssignClick(e){
     return;
   }
 
-  // Stage B: click a new region to assign to
   if (assignState.stage === 'awaitNewRegion') {
     const regionFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
     const newRegion = regionFeat?.properties?.region || '';
-
-    if (!newRegion) {
-      setStatus('Not a valid region. Click inside a region to complete the reassignment.');
-      return;
-    }
+    if (!newRegion) { setStatus('Not a valid region. Click inside a region to complete the reassignment.'); return; }
 
     const line = `${assignState.geoid}\t${assignState.oldRegion}\t${newRegion}`;
     await copyToClipboard(line);
 
-    // small confirmation popup
     new mapboxgl.Popup({ closeButton: true, closeOnClick: true })
       .setLngLat(e.lngLat)
       .setHTML(`<div style="font:12px system-ui">Copied:<br>${escapeHtml(line)}</div>`)
       .addTo(map);
 
     setStatus(`Copied assignment: ${assignState.geoid} | ${assignState.oldRegion} -> ${newRegion}`);
-
-    // reset for next assignment, keep mode on
     assignState = { stage: 'awaitTract', geoid: null, oldRegion: null };
-    return;
   }
 }
 
-// fetch full tract geometry from WFS and display
+// Highlight tract by fetching full geometry from WFS
 async function highlightFullTract(geoid){
   try {
     if (tractAbort) tractAbort.abort();
@@ -396,19 +437,16 @@ async function highlightFullTract(geoid){
     setStatus(`Loading tract ${geoid} from WFS`);
     const url = wfsUrlByGeoid(geoid);
     const res = await fetch(url, { signal: tractAbort.signal });
-    if (!res.ok) {
-      setStatus(`WFS HTTP ${res.status}`);
-      return;
-    }
+    if (!res.ok) { setStatus(`WFS HTTP ${res.status}`); return; }
     const gj = await res.json();
 
     const src = map.getSource('tract-highlight');
     if (src) src.setData(gj);
 
-    map.setLayoutProperty('tracts-highlight-geo-fill', 'visibility', 'visible');
-    map.setLayoutProperty('tracts-highlight-geo-line', 'visibility', 'visible');
-    map.setLayoutProperty('tracts-highlight-fill',     'visibility', 'none');
-    map.setLayoutProperty('tracts-highlight-line',     'visibility', 'none');
+    if (map.getLayer('tracts-highlight-geo-fill')) map.setLayoutProperty('tracts-highlight-geo-fill', 'visibility', 'visible');
+    if (map.getLayer('tracts-highlight-geo-line')) map.setLayoutProperty('tracts-highlight-geo-line', 'visibility', 'visible');
+    if (map.getLayer('tracts-highlight-fill'))     map.setLayoutProperty('tracts-highlight-fill',     'visibility', 'none');
+    if (map.getLayer('tracts-highlight-line'))     map.setLayoutProperty('tracts-highlight-line',     'visibility', 'none');
 
     setStatus(`Loaded full tract ${geoid}`);
   } catch (err) {
@@ -418,19 +456,48 @@ async function highlightFullTract(geoid){
   }
 }
 
-// UI helpers
-function setAssignMode(on){
-  assignmentMode = on;
-  const btn = document.getElementById('assignMode');
-  btn.classList.toggle('active', assignmentMode);
-  btn.classList.toggle('secondary', !assignmentMode);
-  btn.textContent = assignmentMode ? 'Tract Assignment Mode (ON)' : 'Tract Assignment Mode';
-  assignState = { stage: assignmentMode ? 'awaitTract' : 'idle', geoid: null, oldRegion: null };
-  setStatus(assignmentMode ? 'Assignment mode: click a tract to begin.' : 'Assignment mode off.');
+// Client dropdown helpers
+async function loadClientIds(){
+  const sel = document.getElementById('cidSel');
+  sel.innerHTML = `<option>Loading…</option>`;
+  const res = await fetch(clientIdsUrl());
+  if (!res.ok) throw new Error(`Client IDs HTTP ${res.status}`);
+  const gj = await res.json();
+  const vals = new Set();
+  (gj.features || []).forEach(f => {
+    const v = f.properties?.client_id ?? f.properties?.clientid ?? f.properties?.CLIENT_ID ?? null;
+    if (v) vals.add(String(v));
+  });
+  const arr = Array.from(vals).sort((a,b)=>a.localeCompare(b));
+  sel.innerHTML = '';
+  if (!arr.length) {
+    sel.innerHTML = `<option value="">No clients</option>`;
+    return;
+  }
+  arr.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = v;
+    sel.appendChild(opt);
+  });
+
+  // preselect by query param ?client= if present
+  const qp = params.get('client');
+  if (qp && arr.includes(qp)) sel.value = qp;
+  sel.addEventListener('change', () => { CLIENT_ID = getSelectedClient(); applyClientFilter(); });
 }
 
+function ensureClientInDropdown(v){
+  const sel = document.getElementById('cidSel');
+  if (![...sel.options].some(o => o.value === v)) {
+    const opt = document.createElement('option'); opt.value = v; opt.textContent = v; sel.appendChild(opt);
+  }
+  sel.value = v;
+}
+function getSelectedClient(){ return document.getElementById('cidSel').value; }
+
+// Filters and visibility
 function applyClientFilter() {
-  const f = ['==', ['get', 'client_id'], CLIENT_ID];
+  const f = ['==', ['get', 'client_id'], CLIENT_ID || ''];
   safeSetFilter('new-hit',          f);
   safeSetFilter('old-hit',          f);
   safeSetFilter('new-fill',         f);
@@ -438,7 +505,7 @@ function applyClientFilter() {
   safeSetFilter('new-poly-outline', f);
   safeSetFilter('old-poly-outline', f);
   safeSetFilter('new-labels',       f);
-  setStatus(`Client set to ${CLIENT_ID}`);
+  setStatus(`Client set to ${CLIENT_ID || '(none)'}`);
 }
 
 function updateFillsVisibility() {
@@ -449,6 +516,14 @@ function updateFillsVisibility() {
   setVis('tracts-fill', fillsOn && tractsOn);
 }
 
+function restoreVisibilityFromUI(){
+  setVis('new-poly-outline', document.getElementById('chkNewOutline').checked);
+  setVis('old-poly-outline', document.getElementById('chkOldOutline').checked);
+  setVis('tracts-outline',   document.getElementById('chkTracts').checked);
+  updateFillsVisibility();
+}
+
+// Map utilities
 function clearTractHighlight() {
   ['tracts-highlight-geo-fill','tracts-highlight-geo-line','tracts-highlight-fill','tracts-highlight-line'].forEach(id=>{
     if (map.getLayer(id)) map.setLayoutProperty(id,'visibility','none');
@@ -470,7 +545,6 @@ async function fitToClientFromTiles() {
   if (isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY)) map.fitBounds([[minX, minY],[maxX, maxY]], { padding: 30, duration: 0 });
 }
 
-// utilities
 function extractCoords(arr, type, out=[]) {
   if (type === 'Point') return [arr];
   if (type === 'MultiPoint' || type === 'LineString') return arr;
@@ -495,13 +569,22 @@ async function copyToClipboard(value){
 function flashCopied(btn){
   let tag = btn.nextElementSibling;
   if (!tag || !tag.classList.contains('popup-copied')) {
-    tag = document.createElement('span');
-    tag.className = 'popup-copied';
-    tag.textContent = 'Copied';
+    tag = document.createElement('span'); tag.className = 'popup-copied'; tag.textContent = 'Copied';
     btn.parentNode.insertBefore(tag, btn.nextSibling);
   }
   tag.style.display = 'inline';
   setTimeout(() => { tag.style.display = 'none'; }, 1200);
+}
+
+// Assignment mode helpers
+function setAssignMode(on){
+  assignmentMode = on;
+  const btn = document.getElementById('assignMode');
+  btn.classList.toggle('active', assignmentMode);
+  btn.classList.toggle('secondary', !assignmentMode);
+  btn.textContent = assignmentMode ? 'Tract Assignment Mode (ON)' : 'Tract Assignment Mode';
+  assignState = { stage: assignmentMode ? 'awaitTract' : 'idle', geoid: null, oldRegion: null };
+  setStatus(assignmentMode ? 'Assignment mode: click a tract to begin.' : 'Assignment mode off.');
 }
 </script>
 </body>
