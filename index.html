@@ -318,6 +318,41 @@ function buildOperationalLayers(){
     }
   });
 
+  // Synthetic Cities thick black outline
+addLayerIfMissing({
+  id: 'synthetic-cities-line',
+  type: 'line',
+  source: 'syntheticCities',
+  'source-layer': SL_SYN,
+  layout: { visibility: 'none', 'line-join': 'round', 'line-cap': 'round' },
+  paint: {
+    'line-color': '#000000',
+    'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.8, 10, 2.2, 14, 3.2],
+    'line-opacity': 0.95
+  }
+});
+
+// Synthetic Cities labels (synthetic_city_name) with white halo
+addLayerIfMissing({
+  id: 'synthetic-cities-labels',
+  type: 'symbol',
+  source: 'syntheticCities',
+  'source-layer': SL_SYN,
+  layout: {
+    visibility: 'none',
+    'text-field': ['coalesce', ['get', 'synthetic_city_name'], ['get', 'name'], ''],
+    'text-size': ['interpolate', ['linear'], ['zoom'], 5, 11, 12, 15],
+    'text-allow-overlap': false,
+    'text-padding': 2
+  },
+  paint: {
+    'text-color': '#111111',
+    'text-halo-color': '#ffffff',
+    'text-halo-width': 1.2
+  }
+});
+
+
   restoreVisibilityFromUI();
 }
 
@@ -657,6 +692,9 @@ function setAssignMode(on){
 // Synthetic toggle: when on, only New outline is visible
 function toggleSynthetic(on){
   setVis('synthetic-cities-fill', on);
+  setVis('synthetic-cities-line', on);      // NEW
+  setVis('synthetic-cities-labels', on);    // NEW
+
   if (on) {
     setVis('new-poly-outline', true);
     setVis('old-poly-outline', false);
@@ -672,6 +710,7 @@ function toggleSynthetic(on){
     c('chkFills',      false);
   }
 }
+
 
 // Client list helpers
 async function loadClientIds(){
