@@ -49,6 +49,19 @@
     .popup-copied{margin-left:6px;font-size:11px;color:#059669;display:none}
 
     #searchbox-wrap .mapbox-searchbox{width:100%}
+
+    /* Centered modal */
+    .modal-backdrop{
+      position:fixed;inset:0;background:rgba(0,0,0,.25);
+      display:none;align-items:center;justify-content:center;z-index:1500
+    }
+    .modal-box{
+      background:#fff;border-radius:12px;max-width:520px;width:92%;
+      box-shadow:0 10px 30px rgba(0,0,0,.25);padding:16px 18px
+    }
+    .modal-box h4{margin:0 0 8px 0;font-size:15px}
+    .modal-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .hidden{display:none}
   </style>
 </head>
 <body>
@@ -68,6 +81,7 @@
     <button id="apply" class="btn">Apply</button>
     <button id="fit" class="btn">Fit to client</button>
     <button id="assignMode" class="btn toggle secondary" title="Select tract, then choose a new region">Tract Assignment Mode</button>
+    <button id="addRegionMode" class="btn toggle secondary" title="Build a new region from census tracts">Add New Region</button>
     <button id="basemap" class="btn secondary" title="Toggle basemap">Basemap: Light</button>
   </div>
 
@@ -81,18 +95,24 @@
     <label><input type="checkbox" id="chkOldOutline" checked/> Old regions (outline)</label>
     <label><input type="checkbox" id="chkTracts" /> Census tracts (outline)</label>
     <label><input type="checkbox" id="chkFills" /> Boundary Polygon</label>
+    <label><input type="checkbox" id="chkSynthetic" /> Synthetic cities</label>
   </div>
 
   <div class="legend">
     <span class="swatch" style="background:#ff922b"></span> New outline
     <span class="swatch" style="background:#4c6ef5"></span> Old outline
-    <span class="swatch" style="background:#f4a3a3"></span> Census tracts
+    <span class="swatch" style="background:#9b1fe5"></span> Census tracts
   </div>
   <div id="status"></div>
 </div>
 
+<!-- Centered modal -->
+<div id="modal" class="modal-backdrop">
+  <div class="modal-box" id="modalBox"></div>
+</div>
+
 <script>
-// Use a public Mapbox token with Search Box capability enabled
+// Mapbox token
 mapboxgl.accessToken = 'pk.eyJ1IjoiamF5a2luZ2hvcm4iLCJhIjoiY2tjY2gzNTBrMDQ5cTJ6bHI3MmU3OWRjdiJ9.M9_mnej57MG7QWyEhXks_Q';
 
 // Params
@@ -134,7 +154,7 @@ function wfsUrlByGeoid(geoid){
   return u.toString();
 }
 
-// WFS for client ids list (expects layer codecsflip:client_ids with property client_id)
+// Client IDs list
 const CLIENT_IDS_OWS = 'https://dev-geoserver.zartico.com/geoserver/regions_app/ows';
 function clientIdsUrl(){
   const u = new URL(CLIENT_IDS_OWS);
@@ -150,24 +170,41 @@ function clientIdsUrl(){
   return u.toString();
 }
 
+// Synthetic Cities (WMTS REST, EPSG:900913, style "generic")
+const SL_SYN   = 'synthetic_cities_de_view';
+const SYN_TILES = [
+  'https://dev-geoserver.zartico.com/geoserver/gwc/service/wmts/rest/' +
+  'codecsflip:synthetic_cities_de_view/generic/EPSG:900913/EPSG:900913:{z}/{y}/{x}' +
+  '?format=application%2Fvnd.mapbox-vector-tile'
+];
+
 // Colors
 const COLORS = {
   newLine:    '#ff922b',
   oldLine:    '#4c6ef5',
-  tractsLine: '#f4a3a3',
+  tractsLine: '#9b1fe5',
   newFill:    '#fde68a',
   oldFill:    '#bfdbfe',
   tractsFill: '#fecaca',
   label:      '#1f2937',
-  selectFill: '#fde68a',
-  selectLine: '#f59e0b'
+  selectFill: '#d9e0ff',
+  selectLine: '#9b1fe5'
 };
 
 // State
-let CLIENT_ID = null;                // set after loading dropdown
-let tractAbort = null;               // abort WFS fetch
+let CLIENT_ID = null;
+let tractAbort = null;
 let assignmentMode = false;
+let addRegionMode = false;
+
+// Tract Assignment state
 let assignState = { stage: 'idle', geoid: null, oldRegion: null };
+
+// Add Region state
+let addRegionState = { stage:'idle', regionName:'', geoids:new Set() };
+
+// Highlight data survives style swaps
+let tractHighlightData = { type:'FeatureCollection', features:[] };
 
 // Map
 const map = new mapboxgl.Map({
@@ -191,8 +228,7 @@ const map = new mapboxgl.Map({
   });
 })();
 
-// Build all operational sources and layers.
-// Call on initial load and again after map.setStyle via 'style.load'.
+// Build sources and layers
 function buildOperationalLayers(){
   // sources
   if (!map.getSource('newRegions')) map.addSource('newRegions', { type: 'vector', tiles: [tmsUrl(L_NEWREG)],  scheme: SCHEME });
@@ -200,49 +236,54 @@ function buildOperationalLayers(){
   if (!map.getSource('labels'))     map.addSource('labels',     { type: 'vector', tiles: [tmsUrl(L_LABELS)],  scheme: SCHEME });
   if (!map.getSource('tracts'))     map.addSource('tracts',     { type: 'vector', tiles: [tmsUrl(L_TRACTS)],  scheme: SCHEME, promoteId: { [SL_TRACTS]: 'geoid' } });
 
+  // synthetic cities source
+  if (!map.getSource('syntheticCities')) {
+    map.addSource('syntheticCities', {
+      type: 'vector',
+      tiles: SYN_TILES,
+      scheme: 'xyz',
+      minzoom: 0, maxzoom: 22
+    });
+  }
+
+  // highlight geojson
   if (!map.getSource('tract-highlight')) {
-    map.addSource('tract-highlight', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addSource('tract-highlight', { type: 'geojson', data: tractHighlightData });
+  } else {
+    const src = map.getSource('tract-highlight');
+    if (src && src.setData) src.setData(tractHighlightData);
   }
 
-  // helper to add layer if missing
-  function addLayerIfMissing(def, beforeId){
-    if (!map.getLayer(def.id)) {
-      map.addLayer(def, beforeId);
-    }
-  }
+  const addLayerIfMissing = (def) => { if (!map.getLayer(def.id)) map.addLayer(def); };
 
-  // invisible hit layers
+  // hit layers
   addLayerIfMissing({ id:'new-hit', type:'fill', source:'newRegions', 'source-layer':SL_NEWREG,
     filter: ['==', ['get','client_id'], CLIENT_ID ?? ''], paint:{'fill-opacity':0} });
   addLayerIfMissing({ id:'old-hit', type:'fill', source:'oldRegions', 'source-layer':SL_OLDREG,
     filter: ['==', ['get','client_id'], CLIENT_ID ?? ''], paint:{'fill-opacity':0} });
-  addLayerIfMissing({ id:'tracts-hit', type:'fill', source:'tracts', 'source-layer':SL_TRACTS,
-    paint:{'fill-opacity':0} });
+  addLayerIfMissing({ id:'tracts-hit', type:'fill', source:'tracts', 'source-layer':SL_TRACTS, paint:{'fill-opacity':0} });
 
-  // subtle fills (off by default)
+  // subtle fills
   addLayerIfMissing({ id:'old-fill', type:'fill', source:'oldRegions', 'source-layer':SL_OLDREG,
-    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
-    layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.oldFill, 'fill-opacity': 0.12 } });
-
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''], layout:{ visibility: 'none' },
+    paint:{ 'fill-color': COLORS.oldFill, 'fill-opacity': 0.12 } });
   addLayerIfMissing({ id:'new-fill', type:'fill', source:'newRegions', 'source-layer':SL_NEWREG,
-    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
-    layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.newFill, 'fill-opacity': 0.14 } });
-
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''], layout:{ visibility: 'none' },
+    paint:{ 'fill-color': COLORS.newFill, 'fill-opacity': 0.14 } });
   addLayerIfMissing({ id:'tracts-fill', type:'fill', source:'tracts', 'source-layer':SL_TRACTS,
     layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.tractsFill, 'fill-opacity': 0.10 } });
 
   // outlines
+  addLayerIfMissing({ id:'new-poly-outline', type:'line', source:'newRegions', 'source-layer':SL_NEWREG,
+    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
+    layout:{ 'line-cap':'round', 'line-join':'round' },
+    paint:{ 'line-color': COLORS.newLine, 'line-width': ['interpolate',['linear'],['zoom'],4,1,10,2.8,14,4.4], 'line-opacity': 0.95 } });
+
   addLayerIfMissing({ id:'old-poly-outline', type:'line', source:'oldRegions', 'source-layer':SL_OLDREG,
     filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
     layout:{ 'line-cap':'round', 'line-join':'round' },
     paint:{ 'line-color': COLORS.oldLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,1.0,14,1.6], 'line-opacity': 0.95 } });
 
-  addLayerIfMissing({ id:'new-poly-outline', type:'line', source:'newRegions', 'source-layer':SL_NEWREG,
-    filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
-    layout:{ 'line-cap':'round', 'line-join':'round' },
-    paint:{ 'line-color': COLORS.newLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.5,10,1.4,14,2.2], 'line-opacity': 0.95 } });
-
-  // tracts outline off by default
   addLayerIfMissing({ id:'tracts-outline', type:'line', source:'tracts', 'source-layer':SL_TRACTS,
     layout:{ 'line-cap':'round', 'line-join':'round', 'visibility':'none' },
     paint:{ 'line-color': COLORS.tractsLine, 'line-width': ['interpolate',['linear'],['zoom'],4,0.3,10,0.9,14,1.4], 'line-opacity': 0.9 } });
@@ -252,66 +293,68 @@ function buildOperationalLayers(){
     layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.selectFill, 'fill-opacity': 0.35 } });
   addLayerIfMissing({ id:'tracts-highlight-geo-line', type:'line', source:'tract-highlight',
     layout:{ visibility: 'none' }, paint:{ 'line-color': COLORS.selectLine, 'line-width': 2.5 } });
-
   addLayerIfMissing({ id:'tracts-highlight-fill', type:'fill', source:'tracts', 'source-layer':SL_TRACTS,
     layout:{ visibility: 'none' }, paint:{ 'fill-color': COLORS.selectFill, 'fill-opacity': 0.20 } });
   addLayerIfMissing({ id:'tracts-highlight-line', type:'line', source:'tracts', 'source-layer':SL_TRACTS,
     layout:{ visibility: 'none' }, paint:{ 'line-color': COLORS.selectLine, 'line-width': 1.5, 'line-opacity': 0.7 } });
 
-  // labels (always on)
+  // labels
   addLayerIfMissing({ id:'new-labels', type:'symbol', source:'labels', 'source-layer':SL_LABELS,
     filter: ['==', ['get','client_id'], CLIENT_ID ?? ''],
     layout:{ 'text-field':['get','region'], 'text-size':['interpolate',['linear'],['zoom'],5,11,12,14], 'text-allow-overlap': false, 'text-padding': 2 },
     paint:{ 'text-color': COLORS.label, 'text-halo-color': '#ffffff', 'text-halo-width': 1 } });
 
-  // restore visibility from checkboxes
+  // synthetic cities layer (starts hidden)
+  addLayerIfMissing({
+    id:'synthetic-cities-fill',
+    type:'fill',
+    source:'syntheticCities',
+    'source-layer': SL_SYN,
+    layout:{ visibility: 'none' },
+    paint:{
+      'fill-color': '#9ca3af',
+      'fill-opacity': 0.25,
+      'fill-outline-color': '#6b7280'
+    }
+  });
+
   restoreVisibilityFromUI();
 }
 
-// Initial load
 map.on('load', buildOperationalLayers);
+map.on('style.load', buildOperationalLayers);
 
-// Rebuild layers after basemap change
-map.on('style.load', () => {
-  // style changed by setStyle
-  buildOperationalLayers();
-});
-
-// One unified click handler
+// Click handling
 map.on('click', async (e) => {
-  if (assignmentMode) {
-    await handleAssignClick(e);
-  } else {
-    await handleNormalClick(e);
-  }
+  if (addRegionMode)      await handleAddRegionClick(e);
+  else if (assignmentMode)await handleAssignClick(e);
+  else                    await handleNormalClick(e);
 });
 
 // UI wiring
 document.getElementById('apply').onclick = () => { CLIENT_ID = getSelectedClient(); applyClientFilter(); };
 document.getElementById('fit').onclick   = () => fitToClientFromTiles();
-
 document.getElementById('assignMode').onclick = () => setAssignMode(!assignmentMode);
-
+document.getElementById('addRegionMode').onclick = () => setAddRegionMode(!addRegionMode);
 document.getElementById('basemap').onclick = () => {
   currentBase = currentBase === LIGHT_STYLE ? SAT_STYLE : LIGHT_STYLE;
   map.setStyle(currentBase);
   document.getElementById('basemap').textContent = `Basemap: ${currentBase === LIGHT_STYLE ? 'Light' : 'Satellite'}`;
   setStatus(`Basemap set to ${currentBase === LIGHT_STYLE ? 'Light' : 'Satellite'}`);
 };
-
 document.getElementById('chkNewOutline').onchange = (e) => setVis('new-poly-outline', e.target.checked);
 document.getElementById('chkOldOutline').onchange = (e) => setVis('old-poly-outline', e.target.checked);
 document.getElementById('chkTracts').onchange     = (e) => { setVis('tracts-outline', e.target.checked); updateFillsVisibility(); };
 document.getElementById('chkFills').onchange      = () => updateFillsVisibility();
+document.getElementById('chkSynthetic').onchange  = (e) => toggleSynthetic(e.target.checked);
 
-// Load client ids into dropdown and set initial CLIENT_ID
+// Load clients, apply initial filter
 loadClientIds().then(() => {
   CLIENT_ID = getSelectedClient();
   applyClientFilter();
   setStatus('Client list loaded.');
 }).catch(err => {
   console.error('Client IDs load failed', err);
-  // Fallback: if query param ?client= is provided, use it; else keep null
   const fallback = params.get('client') || 'Green_Country_Tourism_OK';
   ensureClientInDropdown(fallback);
   CLIENT_ID = fallback;
@@ -319,7 +362,7 @@ loadClientIds().then(() => {
   setStatus('Client list fallback applied.');
 });
 
-// Normal click behavior
+// Normal click
 async function handleNormalClick(e){
   const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
   const newFeat = map.queryRenderedFeatures(box, { layers: ['new-hit'] }).find(f => f.properties.client_id === CLIENT_ID);
@@ -354,8 +397,7 @@ async function handleNormalClick(e){
     </div>`;
   const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
 
-  const el = popup.getElement();
-  el.querySelectorAll('.popup-copy').forEach(btn => {
+  popup.getElement().querySelectorAll('.popup-copy').forEach(btn => {
     btn.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       const value = btn.getAttribute('data-copy') || '';
@@ -366,7 +408,7 @@ async function handleNormalClick(e){
   });
 }
 
-// Assignment mode click behavior
+// Tract Assignment mode click behavior
 async function handleAssignClick(e){
   const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
 
@@ -379,7 +421,6 @@ async function handleAssignClick(e){
 
     if (!geoid || !curRegion) { setStatus('Click inside a tract and within a current region.'); return; }
 
-    // quick highlight then full
     const idStr = String(geoid);
     if (map.getLayer('tracts-highlight-fill')) {
       map.setFilter('tracts-highlight-fill', ['==', ['to-string',['id']], idStr]);
@@ -415,20 +456,54 @@ async function handleAssignClick(e){
     const newRegion = regionFeat?.properties?.region || '';
     if (!newRegion) { setStatus('Not a valid region. Click inside a region to complete the reassignment.'); return; }
 
-    const line = `${assignState.geoid}\t${assignState.oldRegion}\t${newRegion}`;
-    await copyToClipboard(line);
+    const client = CLIENT_ID || '';
+    const payload = `${client}\t${assignState.geoid}\t${assignState.oldRegion}\t${newRegion}`;
+    await copyToClipboard(payload);
 
     new mapboxgl.Popup({ closeButton: true, closeOnClick: true })
       .setLngLat(e.lngLat)
-      .setHTML(`<div style="font:12px system-ui">Copied:<br>${escapeHtml(line)}</div>`)
+      .setHTML(`<div style="font:12px system-ui">Copied:<br>${escapeHtml(payload)}</div>`)
       .addTo(map);
 
-    setStatus(`Copied assignment: ${assignState.geoid} | ${assignState.oldRegion} -> ${newRegion}`);
+    setStatus(`Copied assignment: ${client} | ${assignState.geoid} | ${assignState.oldRegion} -> ${newRegion}`);
     assignState = { stage: 'awaitTract', geoid: null, oldRegion: null };
   }
 }
 
-// Highlight tract by fetching full geometry from WFS
+// Add Region mode click behavior
+async function handleAddRegionClick(e){
+  const box = [[e.point.x - 3, e.point.y - 3],[e.point.x + 3, e.point.y + 3]];
+  const tract = map.queryRenderedFeatures(box, { layers: ['tracts-hit'] })[0];
+  const geoid = tract?.properties?.geoid || '';
+  if (!geoid) { setStatus('Click inside a census tract.'); return; }
+
+  if (!addRegionState.geoids.has(geoid)) {
+    addRegionState.geoids.add(geoid);
+    try {
+      const res = await fetch(wfsUrlByGeoid(geoid));
+      if (res.ok) {
+        const gj = await res.json();
+        appendTractHighlight(gj);
+      }
+    } catch(_) {}
+  }
+  if (!addRegionState.regionName || addRegionState.stage === 'collecting') {
+    showNameModal(geoid);
+  } else {
+    setStatus(`Selected tracts: ${addRegionState.geoids.size} for "${addRegionState.regionName || '(unnamed)'}".`);
+  }
+}
+
+function appendTractHighlight(gj){
+  if (gj && gj.features && gj.features.length) {
+    tractHighlightData.features.push(...gj.features);
+    const src = map.getSource('tract-highlight');
+    if (src) src.setData(tractHighlightData);
+    map.setLayoutProperty('tracts-highlight-geo-fill', 'visibility', 'visible');
+    map.setLayoutProperty('tracts-highlight-geo-line', 'visibility', 'visible');
+  }
+}
+
 async function highlightFullTract(geoid){
   try {
     if (tractAbort) tractAbort.abort();
@@ -440,8 +515,9 @@ async function highlightFullTract(geoid){
     if (!res.ok) { setStatus(`WFS HTTP ${res.status}`); return; }
     const gj = await res.json();
 
+    tractHighlightData = gj;
     const src = map.getSource('tract-highlight');
-    if (src) src.setData(gj);
+    if (src) src.setData(tractHighlightData);
 
     if (map.getLayer('tracts-highlight-geo-fill')) map.setLayoutProperty('tracts-highlight-geo-fill', 'visibility', 'visible');
     if (map.getLayer('tracts-highlight-geo-line')) map.setLayoutProperty('tracts-highlight-geo-line', 'visibility', 'visible');
@@ -456,7 +532,148 @@ async function highlightFullTract(geoid){
   }
 }
 
-// Client dropdown helpers
+function clearTractHighlight() {
+  tractHighlightData = { type:'FeatureCollection', features:[] };
+  const src = map.getSource('tract-highlight');
+  if (src) src.setData(tractHighlightData);
+  ['tracts-highlight-geo-fill','tracts-highlight-geo-line','tracts-highlight-fill','tracts-highlight-line'].forEach(id=>{
+    if (map.getLayer(id)) map.setLayoutProperty(id,'visibility','none');
+  });
+}
+
+// Modal helpers
+function showModal(html){
+  const box = document.getElementById('modalBox');
+  box.innerHTML = html;
+  document.getElementById('modal').style.display = 'flex';
+}
+function hideModal(){ document.getElementById('modal').style.display = 'none'; }
+
+function showStartSelectingModal(){
+  showModal(`
+    <h4>Add New Region</h4>
+    <div>Choose the first census tract to add a region.</div>
+    <div class="modal-actions">
+      <button id="okStart" class="btn">OK</button>
+      <button id="cancelStart" class="btn secondary">Cancel</button>
+    </div>
+  `);
+  document.getElementById('okStart').onclick = () => { hideModal(); addRegionState.stage = 'awaitFirst'; };
+  document.getElementById('cancelStart').onclick = () => setAddRegionMode(false);
+}
+
+function showNameModal(lastGeoidClicked){
+  const current = addRegionState.regionName || '';
+  const listArr = Array.from(addRegionState.geoids);
+  showModal(`
+    <h4>Name New Region</h4>
+    <div class="field">
+      <label>Region name</label>
+      <input id="regionNameInput" class="input" placeholder="New Region Name" value="${escapeHtml(current)}"/>
+    </div>
+    <div class="field">
+      <label>Selected tracts (${listArr.length})</label>
+      <div style="max-height:120px;overflow:auto">${listArr.map(escapeHtml).join(', ') || escapeHtml(lastGeoidClicked || '')}</div>
+    </div>
+    <div class="modal-actions">
+      <button id="doneBtn" class="btn">Done</button>
+      <button id="addMoreBtn" class="btn secondary">Add another tract</button>
+      <button id="cancelBtn" class="btn secondary">Cancel</button>
+    </div>
+  `);
+
+  const input = document.getElementById('regionNameInput');
+  input.focus(); input.select();
+
+  document.getElementById('cancelBtn').onclick = () => { hideModal(); };
+
+  document.getElementById('addMoreBtn').onclick = () => {
+    addRegionState.regionName = input.value.trim();
+    addRegionState.stage = 'collecting';
+    hideModal();
+    setStatus(`Selected tracts: ${addRegionState.geoids.size} for "${addRegionState.regionName || '(unnamed)'}". Click another tract or Done.`);
+  };
+
+  document.getElementById('doneBtn').onclick = async () => {
+    addRegionState.regionName = input.value.trim();
+    const regionName = addRegionState.regionName;
+    const client = CLIENT_ID || '';
+    const list = Array.from(addRegionState.geoids).sort();
+
+    if (!client || !regionName || list.length === 0) { setStatus('Need client, region name, and at least one tract.'); return; }
+
+    const payload = `${client}\t${list.join(',')}\t\t${regionName}`;
+    await copyToClipboard(payload);
+    setStatus(`Copied: ${client} | ${list.length} tract(s) | ${regionName}`);
+
+    hideModal();
+
+    addRegionState = { stage:'awaitFirst', regionName:'', geoids:new Set() };
+    clearTractHighlight();
+    showStartSelectingModal();
+  };
+}
+
+// Mode toggles
+function setAddRegionMode(on){
+  addRegionMode = on;
+  if (addRegionMode && assignmentMode) setAssignMode(false);
+  const btn = document.getElementById('addRegionMode');
+  btn.classList.toggle('active', addRegionMode);
+  btn.classList.toggle('secondary', !addRegionMode);
+  btn.textContent = addRegionMode ? 'Add New Region (ON)' : 'Add New Region';
+
+  if (addRegionMode) {
+    setVis('new-poly-outline', true);
+    setVis('old-poly-outline', true);
+    setVis('tracts-outline',   true);
+    const chkNew = document.getElementById('chkNewOutline'); if (chkNew) chkNew.checked = true;
+    const chkOld = document.getElementById('chkOldOutline'); if (chkOld) chkOld.checked = true;
+    const chkTr  = document.getElementById('chkTracts');     if (chkTr)  chkTr.checked = true;
+
+    addRegionState = { stage:'awaitFirst', regionName:'', geoids:new Set() };
+    clearTractHighlight();
+    showStartSelectingModal();
+    setStatus('Add New Region mode: click a tract to begin.');
+  } else {
+    hideModal();
+    addRegionState = { stage:'idle', regionName:'', geoids:new Set() };
+    clearTractHighlight();
+    setStatus('Add New Region mode off.');
+  }
+}
+
+function setAssignMode(on){
+  assignmentMode = on;
+  if (assignmentMode && addRegionMode) setAddRegionMode(false);
+  const btn = document.getElementById('assignMode');
+  btn.classList.toggle('active', assignmentMode);
+  btn.classList.toggle('secondary', !assignmentMode);
+  btn.textContent = assignmentMode ? 'Tract Assignment Mode (ON)' : 'Tract Assignment Mode';
+  assignState = { stage: assignmentMode ? 'awaitTract' : 'idle', geoid: null, oldRegion: null };
+  setStatus(assignmentMode ? 'Assignment mode: click a tract to begin.' : 'Assignment mode off.');
+}
+
+// Synthetic toggle: when on, only New outline is visible
+function toggleSynthetic(on){
+  setVis('synthetic-cities-fill', on);
+  if (on) {
+    setVis('new-poly-outline', true);
+    setVis('old-poly-outline', false);
+    setVis('tracts-outline',   false);
+    setVis('new-fill', false);
+    setVis('old-fill', false);
+    setVis('tracts-fill', false);
+
+    const c = (id, val) => { const el = document.getElementById(id); if (el) el.checked = val; };
+    c('chkNewOutline', true);
+    c('chkOldOutline', false);
+    c('chkTracts',     false);
+    c('chkFills',      false);
+  }
+}
+
+// Client list helpers
 async function loadClientIds(){
   const sel = document.getElementById('cidSel');
   sel.innerHTML = `<option>Loading…</option>`;
@@ -470,22 +687,12 @@ async function loadClientIds(){
   });
   const arr = Array.from(vals).sort((a,b)=>a.localeCompare(b));
   sel.innerHTML = '';
-  if (!arr.length) {
-    sel.innerHTML = `<option value="">No clients</option>`;
-    return;
-  }
-  arr.forEach(v => {
-    const opt = document.createElement('option');
-    opt.value = v; opt.textContent = v;
-    sel.appendChild(opt);
-  });
-
-  // preselect by query param ?client= if present
+  if (!arr.length) { sel.innerHTML = `<option value="">No clients</option>`; return; }
+  arr.forEach(v => { const opt = document.createElement('option'); opt.value = v; opt.textContent = v; sel.appendChild(opt); });
   const qp = params.get('client');
   if (qp && arr.includes(qp)) sel.value = qp;
   sel.addEventListener('change', () => { CLIENT_ID = getSelectedClient(); applyClientFilter(); });
 }
-
 function ensureClientInDropdown(v){
   const sel = document.getElementById('cidSel');
   if (![...sel.options].some(o => o.value === v)) {
@@ -521,17 +728,11 @@ function restoreVisibilityFromUI(){
   setVis('old-poly-outline', document.getElementById('chkOldOutline').checked);
   setVis('tracts-outline',   document.getElementById('chkTracts').checked);
   updateFillsVisibility();
+  const syn = document.getElementById('chkSynthetic');
+  if (syn) toggleSynthetic(syn.checked);
 }
 
-// Map utilities
-function clearTractHighlight() {
-  ['tracts-highlight-geo-fill','tracts-highlight-geo-line','tracts-highlight-fill','tracts-highlight-line'].forEach(id=>{
-    if (map.getLayer(id)) map.setLayoutProperty(id,'visibility','none');
-  });
-  const src = map.getSource('tract-highlight');
-  if (src) src.setData({ type:'FeatureCollection', features:[] });
-}
-
+// Fit and utilities
 async function fitToClientFromTiles() {
   applyClientFilter();
   await idle();
@@ -574,17 +775,6 @@ function flashCopied(btn){
   }
   tag.style.display = 'inline';
   setTimeout(() => { tag.style.display = 'none'; }, 1200);
-}
-
-// Assignment mode helpers
-function setAssignMode(on){
-  assignmentMode = on;
-  const btn = document.getElementById('assignMode');
-  btn.classList.toggle('active', assignmentMode);
-  btn.classList.toggle('secondary', !assignmentMode);
-  btn.textContent = assignmentMode ? 'Tract Assignment Mode (ON)' : 'Tract Assignment Mode';
-  assignState = { stage: assignmentMode ? 'awaitTract' : 'idle', geoid: null, oldRegion: null };
-  setStatus(assignmentMode ? 'Assignment mode: click a tract to begin.' : 'Assignment mode off.');
 }
 </script>
 </body>
